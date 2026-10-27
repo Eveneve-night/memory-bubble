@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memory-bubble.local/schema/memory-bubble-v1.schema.json",
+  "title": "Memory Bubble graph export v1",
+  "description": "忆泡记忆图的唯一外部接口格式。任何宿主（DSH 插件 / 浏览器 / app / MCP）导出或导入都用它，保证记忆可以继承、迁移到下一段对话。",
+  "type": "object",
+  "required": ["schema", "version", "graph"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "memory-bubble/v1" },
+    "version": { "type": "integer", "minimum": 1 },
+    "exportedAt": { "type": "string", "format": "date-time" },
+    "source": {
+      "type": "object",
+      "description": "导出时所在环境，便于跨宿主回溯",
+      "additionalProperties": true,
+      "properties": {
+        "host": { "type": "string", "examples": ["dsh", "browser", "tauri", "mcp"] },
+        "hostVersion": { "type": "string" },
+        "profileId": { "type": "string" },
+        "sessionId": { "type": "string" }
+      }
+    },
+    "graph": {
+      "type": "object",
+      "required": ["id", "nodes", "edges"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "default": "default" },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" } },
+        "edges": { "type": "array", "items": { "$ref": "#/$defs/edge" } },
+        "layoutCache": {
+          "type": "object",
+          "description": "纯缓存，可丢弃；导入方必须能重算",
+          "additionalProperties": { "$ref": "#/$defs/point" }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "counts": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "model": { "type": "string", "description": "上次执行抽取的模型" },
+        "journalLines": { "type": "integer" }
+      }
+    },
+    "brief": {
+      "type": "object",
+      "description": "可选：导出时点的记忆简报快照；新会话首轮可直接喂给模型",
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "maxLength": 6000 },
+        "tokensEstimate": { "type": "integer", "minimum": 0 },
+        "nodeIds": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "$defs": {
+    "point": {
+      "type": "object",
+      "required": ["x", "y"],
+      "additionalProperties": false,
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    },
+    "sourceRef": {
+      "type": "object",
+      "required": ["sessionId", "seqStart"],
+      "additionalProperties": false,
+      "properties": {
+        "sessionId": { "type": "string" },
+        "seqStart": { "type": "integer", "minimum": 0 },
+        "seqEnd": { "type": "integer", "minimum": 0 },
+        "excerpt": { "type": "string", "maxLength": 500 },
+        "ts": { "type": "string", "format": "date-time" }
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": ["id", "title", "summary", "importance", "frequency", "createdAt"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^mem_[0-9a-f]{8}$" },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24,
+          "description": "短标题；图中/近档显示。AI 生成，用户可改"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "事实描述。AI 生成，用户可改"
+        },
+        "keywords": {
+          "type": "array",
+          "maxItems": 8,
+          "items": { "type": "string", "maxLength": 24 }
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 8,
+          "items": { "type": "string", "maxLength": 24 }
+        },
+        "importance": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "0-1，决定圆半径；AI 初判，用户滑杆改（主动权重）"
+        },
+        "frequency": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "被动累加：被合并/被引用/被选中/被搜到各 +1；决定离中心远近"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "AI 抽取置信度（展示为“AI 初判”）"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "conflict", "archived"],
+          "default": "active"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "lastTouchedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "最近一次被命中/引用时间，用于 recency 衰减"
+        },
+        "sourceRefs": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/sourceRef" } }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["id", "from", "to", "relation", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^rel_[0-9a-f]{8}$" },
+        "from": { "type": "string" },
+        "to": { "type": "string" },
+        "relation": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "一句话关系说明（因果/补充/偏好/时间先后/冲突）"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["causal", "supplement", "preference", "temporal", "same-topic", "conflict", "other"],
+          "default": "supplement"
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "conflict": { "type": "boolean", "default": false },
+        "conflictNote": { "type": "string", "maxLength": 300 },
+        "weightScale": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 1,
+          "description": "注入时的权重系数；冲突默认 0.4（“后续思考降权”的落点）"
+        },
+        "userConfirmed": { "type": "boolean", "default": false },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

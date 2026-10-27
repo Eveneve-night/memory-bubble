@@ -1,0 +1,22 @@
+# 依赖与构建产物（本仓库不提交）
+node_modules/
+pnpm-lock.yaml
+
+# 运行期数据
+.memory-bubble/
+exports/
+*.log
+*.tmp
+
+# 系统 / 编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# 本地 QA 产物
+qa-results.json
+t-*.png
+qa-final.png
+_qa.mjs
+_probe*.mjs

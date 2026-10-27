@@ -1,0 +1,969 @@
+/**
+ * 忆泡（Memory Bubble）· 客户端半
+ *
+ * 单文件、零构建、零第三方依赖（只 require('react')），由 DSH Web 的模块表加载：
+ *   window.__ModuleLoader__.load({ id, factory })
+ *
+ * 注册位置：
+ *  - sidebar.panellist  「忆泡」入口（全局）
+ *  - main              暖色泡泡图主面板
+ *  - conversation.input.left  输入框左上角的忆泡小药丸（带记忆条数，点开面板）
+ *  - settings.section  设置页：自动总结、去抖、注入方式、导出/导入
+ *
+ * 数据全部来自同源接口 /memory-bubble/api/*，不直连磁盘。
+ */
+
+window.__ModuleLoader__.load({
+  id: 'dsh-memory-bubble',
+  factory: (require) => {
+    var module = { exports: {} }
+    var exports = module.exports
+
+    const React = require('react')
+    const h = React.createElement
+    const { useState, useEffect, useRef, useCallback } = React
+
+    const API = '/memory-bubble/api'
+    const PANEL_ID = 'memory-bubble'
+    const store = { sessionId: null }
+
+    /* ------------------------------------------------------------ 工具函数 */
+
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
+
+    function tonePalette(tone) {
+      switch (tone) {
+        case 'apricot': return ['#ffc58f', '#f58c5c']
+        case 'honey': return ['#ffe3a1', '#f6b95e']
+        case 'rose': return ['#ffc1c4', '#ef8f9c']
+        case 'milk': return ['#f7e8dc', '#d9c3b2']
+        case 'sage': return ['#d7e6cf', '#a9c6a1']
+        case 'lilac': return ['#e2d7f0', '#b9a5d6']
+        default: return ['#ffc9ae', '#f4724f']
+      }
+    }
+
+    const KIND_LABELS = {
+      preference: '偏好', fact: '事实', plan: '计划', relation: '关系',
+      goal: '目标', emotion: '情绪', taboo: '禁忌',
+    }
+
+    function tierOf(scale) {
+      if (scale < 0.62) return { key: 'far', label: '远景 · 柔光团块' }
+      if (scale < 1.3) return { key: 'mid', label: '中景 · 关键词' }
+      return { key: 'near', label: '近景 · 记忆全貌' }
+    }
+
+    function shortTitle(title) {
+      if (!title) return ''
+      return title.length > 7 ? title.slice(0, 6) + '…' : title
+    }
+
+    function fmtDate(iso) {
+      if (!iso) return '—'
+      const date = new Date(iso)
+      if (Number.isNaN(date.getTime())) return '—'
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    }
+
+    async function api(path, options) {
+      const response = await fetch(API + path, Object.assign({
+        headers: { 'content-type': 'application/json' },
+      }, options))
+      let body = null
+      try { body = await response.json() } catch { body = null }
+      if (!response.ok || (body && body.ok === false && body.error && !body.layout)) {
+        const message = (body && body.error) || `HTTP ${response.status}`
+        throw new Error(String(message))
+      }
+      return body
+    }
+
+    /* ------------------------------------------------------------ 主题 */
+
+    function normalizeScheme(snapshot) {
+      const raw = snapshot && (snapshot.active && snapshot.active.colorScheme
+        ? snapshot.active.colorScheme
+        : snapshot.preference)
+      return raw === 'dark' ? 'dark' : 'light'
+    }
+
+    function useColorScheme(ctx) {
+      const [scheme, setScheme] = useState(() => {
+        try {
+          const theme = ctx && ctx.get && ctx.get('theme')
+          const snapshot = theme && theme.getTheme && theme.getTheme()
+          return normalizeScheme(snapshot)
+        } catch { return 'light' }
+      })
+      useEffect(() => {
+        let off = null
+        try {
+          const theme = ctx && ctx.get && ctx.get('theme')
+          const snapshot = theme && theme.getTheme && theme.getTheme()
+          if (snapshot) setScheme(normalizeScheme(snapshot))
+          off = ctx.on && ctx.on('theme/change', (next) => setScheme(normalizeScheme(next)))
+        } catch { /* theme 服务不在就跟随系统 */ }
+        return () => { if (typeof off === 'function') { try { off() } catch { /* ignore */ } } }
+      }, [ctx])
+      return scheme
+    }
+
+    /* ------------------------------------------------------------ CSS */
+
+    const CSS = `
+.mb-root{position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden;
+  background:radial-gradient(120% 90% at 15% 0%, #fff7ee 0%, #ffeede 42%, #fff3e6 68%, #fffaf4 100%);
+  color:#4a3327;font-family:var(--dsw-font-family-sans,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif);
+  --mb-ink:#4a3327;--mb-ink-soft:#8a6f5f;--mb-line:rgba(196,148,118,.28);
+  --mb-card:rgba(255,252,247,.92);--mb-card-strong:rgba(255,253,250,.97);
+  --mb-coral:#f4714d;--mb-coral-soft:rgba(244,113,77,.14);--mb-shadow:0 18px 50px rgba(168,98,62,.16);
+  --mb-chip:rgba(255,255,255,.72);--mb-far-op:.55;
+}
+html[data-mb-theme="dark"] .mb-root{
+  background:radial-gradient(120% 90% at 15% 0%, #2c211c 0%, #241a16 45%, #201612 75%, #1d1411 100%);
+  color:#f3e3d4;
+  --mb-ink:#f3e3d4;--mb-ink-soft:#c3a996;--mb-line:rgba(255,214,186,.16);
+  --mb-card:rgba(48,36,30,.92);--mb-card-strong:rgba(54,41,34,.97);
+  --mb-coral:#ff8a66;--mb-coral-soft:rgba(255,138,102,.16);--mb-shadow:0 20px 60px rgba(0,0,0,.45);
+  --mb-chip:rgba(255,255,255,.08);--mb-far-op:.5;
+}
+@media (prefers-color-scheme:dark){
+  html:not([data-mb-theme="light"]) .mb-root{
+    background:radial-gradient(120% 90% at 15% 0%, #2c211c 0%, #241a16 45%, #201612 75%, #1d1411 100%);
+    color:#f3e3d4;
+    --mb-ink:#f3e3d4;--mb-ink-soft:#c3a996;--mb-line:rgba(255,214,186,.16);
+    --mb-card:rgba(48,36,30,.92);--mb-card-strong:rgba(54,41,34,.97);
+    --mb-coral:#ff8a66;--mb-coral-soft:rgba(255,138,102,.16);--mb-shadow:0 20px 60px rgba(0,0,0,.45);
+    --mb-chip:rgba(255,255,255,.08);--mb-far-op:.5;
+  }
+}
+.mb-header{display:flex;align-items:center;gap:14px;padding:14px 20px;flex:none;border-bottom:1px solid var(--mb-line)}
+.mb-brand{display:flex;align-items:center;gap:10px;min-width:0}
+.mb-logo{width:34px;height:34px;border-radius:50%;flex:none;
+  background:radial-gradient(circle at 32% 26%, #fff5e9 0%, #ffd9b8 26%, #f9a97b 62%, #ee7a54 100%);
+  box-shadow:0 6px 18px rgba(238,122,84,.45), inset 0 -3px 8px rgba(214,105,66,.35)}
+.mb-title{font-size:15px;font-weight:650;letter-spacing:.02em;display:flex;align-items:baseline;gap:8px;white-space:nowrap}
+.mb-title small{font-size:10px;font-weight:500;letter-spacing:.14em;color:var(--mb-ink-soft);opacity:.8}
+.mb-sub{font-size:11.5px;color:var(--mb-ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mb-spacer{flex:1}
+.mb-search{display:flex;align-items:center;gap:8px;background:var(--mb-card);border:1px solid var(--mb-line);
+  border-radius:999px;padding:7px 14px;min-width:220px;max-width:300px;flex:1}
+.mb-search input{border:0;outline:0;background:transparent;color:var(--mb-ink);font-size:12.5px;width:100%}
+.mb-search input::placeholder{color:var(--mb-ink-soft);opacity:.65}
+.mb-icon-btn{width:32px;height:32px;border-radius:50%;border:1px solid var(--mb-line);background:var(--mb-card);
+  color:var(--mb-ink);font-size:13px;display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none;transition:transform .12s ease,background .15s ease}
+.mb-icon-btn:hover{transform:translateY(-1px);background:var(--mb-card-strong)}
+.mb-icon-btn:active{transform:scale(.94)}
+.mb-btn{border:0;border-radius:999px;padding:8px 15px;font-size:12.5px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+  background:var(--mb-chip);color:var(--mb-ink);transition:transform .12s ease,background .15s ease}
+.mb-btn:hover{transform:translateY(-1px)}
+.mb-btn:active{transform:scale(.96)}
+.mb-btn.primary{background:linear-gradient(135deg,#ff9868,#f4714d);color:#fff;box-shadow:0 8px 22px rgba(244,113,77,.32)}
+.mb-btn.ghost{background:transparent;border:1px solid var(--mb-line)}
+.mb-btn.danger{background:rgba(200,80,60,.12);color:#d2543a}
+html[data-mb-theme="dark"] .mb-btn.danger{color:#ff9a80}
+.mb-btn[disabled]{opacity:.45;cursor:not-allowed;transform:none}
+.mb-chip-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.mb-seg{display:flex;background:var(--mb-chip);border-radius:999px;padding:3px;gap:2px}
+.mb-seg button{border:0;background:transparent;color:var(--mb-ink-soft);font-size:11.5px;padding:4px 10px;border-radius:999px;cursor:pointer}
+.mb-seg button.on{background:var(--mb-card-strong);color:var(--mb-ink);box-shadow:0 2px 8px rgba(140,92,60,.16)}
+.mb-viewport{position:relative;flex:1;overflow:hidden;cursor:grab;touch-action:none}
+.mb-viewport.dragging{cursor:grabbing}
+.mb-stage{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
+.mb-edges{position:absolute;left:0;top:0;overflow:visible}
+.mb-edge-line{stroke:rgba(178,128,98,.5);stroke-width:1.2;fill:none;vector-effect:non-scaling-stroke;transition:stroke .18s ease,stroke-opacity .18s ease}
+html[data-mb-theme="dark"] .mb-edge-line{stroke:rgba(255,198,160,.34)}
+.mb-edge-line.conflict{stroke:#c95f42;stroke-dasharray:5 5;stroke-opacity:.8}
+html[data-mb-theme="dark"] .mb-edge-line.conflict{stroke:#ff9c7c}
+.mb-edge-line.hot{stroke:rgba(232,120,72,.9);stroke-opacity:1}
+.mb-edge-hit{stroke:transparent;stroke-width:14;fill:none;cursor:pointer;pointer-events:stroke}
+.mb-node{position:absolute;border-radius:50%;cursor:pointer;transition:box-shadow .18s ease,filter .2s ease,opacity .22s ease;
+  box-shadow:0 10px 26px rgba(180,104,66,.22), inset 0 0 0 1px rgba(255,255,255,.5), inset 0 -6px 16px rgba(180,92,54,.18)}
+html[data-mb-theme="dark"] .mb-node{box-shadow:0 12px 30px rgba(0,0,0,.42), inset 0 0 0 1px rgba(255,255,255,.16), inset 0 -8px 18px rgba(0,0,0,.25)}
+.mb-node::before{content:'';position:absolute;inset:17% 20% 48% 24%;border-radius:50%;
+  background:radial-gradient(circle at 50% 40%, rgba(255,255,255,.9), rgba(255,255,255,0) 72%);pointer-events:none}
+.mb-node::after{content:'';position:absolute;inset:0;border-radius:50%;box-shadow:inset 0 0 0 2px transparent;transition:box-shadow .16s ease;pointer-events:none}
+.mb-node:hover::after,.mb-node.sel::after{box-shadow:inset 0 0 0 2px rgba(255,255,255,.85), inset 0 0 22px rgba(255,244,232,.6)}
+.mb-node.dimmed{opacity:.16;filter:saturate(.4)}
+.mb-node.pinned{filter:drop-shadow(0 0 12px rgba(255,196,140,.75))}
+.mb-label{position:absolute;text-align:center;pointer-events:none;line-height:1.28;color:var(--mb-ink);
+  text-shadow:0 1px 0 rgba(255,255,255,.55);font-weight:560;letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+html[data-mb-theme="dark"] .mb-label{text-shadow:0 1px 2px rgba(0,0,0,.5)}
+.mb-label .kw{display:block;font-size:.86em;font-weight:450;color:var(--mb-ink-soft)}
+.mb-legend{position:absolute;left:18px;bottom:16px;display:flex;align-items:center;gap:10px;padding:8px 14px;border-radius:999px;
+  background:var(--mb-card);border:1px solid var(--mb-line);font-size:11.5px;color:var(--mb-ink-soft);backdrop-filter:blur(8px);pointer-events:none}
+.mb-legend b{color:var(--mb-ink);font-weight:600}
+.mb-zoom-pill{position:absolute;right:18px;bottom:16px;padding:7px 13px;border-radius:999px;background:var(--mb-card);
+  border:1px solid var(--mb-line);font-size:11.5px;color:var(--mb-ink-soft);pointer-events:none}
+.mb-tray{flex:none;display:flex;align-items:center;gap:10px;padding:10px 20px 14px;border-top:1px solid var(--mb-line);min-height:56px}
+.mb-tray-label{font-size:12px;color:var(--mb-ink-soft);white-space:nowrap;display:flex;align-items:center;gap:6px}
+.mb-tray-badge{background:var(--mb-coral-soft);color:var(--mb-coral);border-radius:999px;padding:1px 7px;font-weight:600;font-size:11px}
+.mb-tray-chips{display:flex;gap:6px;flex-wrap:wrap;flex:1}
+.mb-chip{display:inline-flex;align-items:center;gap:6px;background:var(--mb-card);border:1px solid var(--mb-line);
+  border-radius:999px;padding:4px 10px;font-size:11.5px;max-width:230px}
+.mb-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mb-chip button{border:0;background:transparent;color:var(--mb-ink-soft);cursor:pointer;font-size:12px;padding:0 0 0 2px}
+.mb-card{position:absolute;top:74px;right:16px;width:330px;max-height:calc(100% - 150px);overflow:auto;z-index:20;
+  border-radius:22px;background:var(--mb-card-strong);border:1px solid var(--mb-line);box-shadow:var(--mb-shadow);padding:18px;backdrop-filter:blur(14px)}
+.mb-card h3{margin:0 0 4px;font-size:15px;font-weight:650;line-height:1.35}
+.mb-card .meta{font-size:11px;color:var(--mb-ink-soft);margin-bottom:10px}
+.mb-card .summary{font-size:12.5px;line-height:1.6;color:var(--mb-ink);margin:10px 0;white-space:pre-wrap}
+.mb-card .section-label{font-size:10.5px;letter-spacing:.1em;color:var(--mb-ink-soft);text-transform:uppercase;margin:14px 0 6px}
+.mb-card .row{display:flex;align-items:center;gap:8px;margin:10px 0}
+.mb-card input[type=range]{flex:1;accent-color:var(--mb-coral)}
+.mb-card input[type=text],.mb-card textarea,.mb-card select{width:100%;border:1px solid var(--mb-line);background:var(--mb-chip);
+  color:var(--mb-ink);border-radius:10px;padding:7px 9px;font-size:12.5px;outline:none;font-family:inherit}
+.mb-card textarea{min-height:74px;resize:vertical;line-height:1.6}
+.mb-card .actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+.mb-chips{display:flex;flex-wrap:wrap;gap:5px}
+.mb-kw{background:var(--mb-chip);border:1px solid var(--mb-line);border-radius:999px;padding:2px 9px;font-size:11px}
+.mb-close{position:absolute;top:10px;right:12px;border:0;background:transparent;color:var(--mb-ink-soft);font-size:16px;cursor:pointer}
+.mb-pop{position:absolute;z-index:30;right:16px;top:64px;width:300px;border-radius:18px;background:var(--mb-card-strong);
+  border:1px solid var(--mb-line);box-shadow:var(--mb-shadow);padding:16px;backdrop-filter:blur(14px)}
+.mb-pop label{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;margin:9px 0;color:var(--mb-ink)}
+.mb-pop input[type=number]{width:92px;border:1px solid var(--mb-line);background:var(--mb-chip);color:var(--mb-ink);
+  border-radius:8px;padding:5px 8px;font-size:12px}
+.mb-pop select{border:1px solid var(--mb-line);background:var(--mb-chip);color:var(--mb-ink);border-radius:8px;padding:5px 8px;font-size:12px}
+.mb-switch{position:relative;width:38px;height:22px;border-radius:999px;background:rgba(140,110,90,.22);border:0;cursor:pointer;transition:background .18s ease;flex:none}
+.mb-switch::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .18s ease;box-shadow:0 2px 6px rgba(0,0,0,.2)}
+.mb-switch.on{background:var(--mb-coral)}
+.mb-switch.on::after{transform:translateX(16px)}
+.mb-drawer{position:absolute;z-index:25;left:50%;bottom:70px;transform:translateX(-50%);width:min(640px,86%);
+  border-radius:20px;background:var(--mb-card-strong);border:1px solid var(--mb-line);box-shadow:var(--mb-shadow);padding:16px 18px}
+.mb-drawer pre{margin:8px 0 0;white-space:pre-wrap;font-size:12px;line-height:1.7;color:var(--mb-ink);max-height:240px;overflow:auto;font-family:ui-monospace,Consolas,monospace}
+.mb-toasts{position:absolute;left:50%;bottom:78px;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:40;align-items:center;pointer-events:none}
+.mb-toast{background:rgba(66,46,36,.9);color:#fff7ee;border-radius:999px;padding:8px 16px;font-size:12px;box-shadow:0 10px 26px rgba(60,34,20,.28);
+  animation:mb-toast-in .18s ease}
+html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8}
+@keyframes mb-toast-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.mb-trigger{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--mb-line);background:var(--mb-card);
+  color:var(--mb-ink);border-radius:999px;padding:5px 11px 5px 8px;font-size:12px;cursor:pointer;transition:transform .12s ease}
+.mb-trigger:hover{transform:translateY(-1px)}
+.mb-trigger .dot{width:16px;height:16px;border-radius:50%;background:radial-gradient(circle at 32% 28%,#fff3e4,#ffc39b 45%,#f4885c 100%);
+  box-shadow:0 2px 6px rgba(238,122,84,.5)}
+.mb-trigger b{font-weight:650}
+.mb-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--mb-ink-soft);font-size:13px}
+.mb-empty .bubble{width:76px;height:76px;border-radius:50%;background:radial-gradient(circle at 32% 28%,#fff5e9,#ffd9b8 30%,#f9a97b 70%,#ee7a54 100%);
+  box-shadow:0 14px 40px rgba(238,122,84,.4);animation:mb-breathe 3.4s ease-in-out infinite}
+@keyframes mb-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+@media (prefers-reduced-motion:reduce){.mb-empty .bubble{animation:none}.mb-toast{animation:none}}
+.mb-settings{display:flex;flex-direction:column;gap:14px;padding:6px 2px;max-width:560px;color:var(--mb-ink);font-size:13px}
+.mb-settings h4{margin:0;font-size:14px}
+.mb-settings p{margin:0;font-size:12px;color:var(--mb-ink-soft);line-height:1.6}
+.mb-settings label{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 14px;border:1px solid var(--mb-line);border-radius:14px;background:var(--mb-card)}
+.mb-settings input[type=number],.mb-settings select{border:1px solid var(--mb-line);background:var(--mb-chip);color:var(--mb-ink);border-radius:8px;padding:5px 8px;font-size:12px}
+.mb-settings .hint{font-size:11px;color:var(--mb-ink-soft)}
+`
+
+    function ensureStyle() {
+      let el = document.querySelector('style[data-memory-bubble]')
+      if (!el) {
+        el = document.createElement('style')
+        el.setAttribute('data-memory-bubble', '')
+        el.textContent = CSS
+        document.head.appendChild(el)
+      }
+      return el
+    }
+
+    /* ------------------------------------------------------------ 通用小组件 */
+
+    function ToastStack({ toasts }) {
+      return h('div', { className: 'mb-toasts' }, toasts.map((toast) =>
+        h('div', { key: toast.id, className: 'mb-toast' }, toast.text)))
+    }
+
+    function Switch({ on, onClick, title }) {
+      return h('button', { className: 'mb-switch' + (on ? ' on' : ''), onClick, title, type: 'button' })
+    }
+
+    function Chip({ node, onRemove }) {
+      const palette = tonePalette(node.tone)
+      return h('span', { className: 'mb-chip' },
+        h('i', { style: { width: 8, height: 8, borderRadius: '50%', background: `linear-gradient(135deg, ${palette[0]}, ${palette[1]})`, flex: 'none' } }),
+        h('span', null, node.title),
+        onRemove ? h('button', { onClick: onRemove, title: '移出托盘' }, '×') : null)
+    }
+
+    /* ------------------------------------------------------------ 主面板 */
+
+    function GraphPanel({ ctx }) {
+      const scheme = useColorScheme(ctx)
+      useEffect(() => {
+        document.documentElement.dataset.mbTheme = scheme === 'dark' ? 'dark' : 'light'
+      }, [scheme])
+
+      const [data, setData] = useState(null)
+      const [error, setError] = useState('')
+      const [scope, setScope] = useState('all')
+      const [sessionId, setSessionId] = useState(store.sessionId || '')
+      const [search, setSearch] = useState('')
+      const [selected, setSelected] = useState(null)
+      const [toasts, setToasts] = useState([])
+      const [busy, setBusy] = useState('')
+      const [settingsOpen, setSettingsOpen] = useState(false)
+      const [digestOpen, setDigestOpen] = useState(false)
+      const [confirmUndo, setConfirmUndo] = useState(false)
+      const viewportRef = useRef(null)
+      const viewRef = useRef({ ox: 0, oy: 0, scale: 1 })
+      const dragRef = useRef(null)
+      const [view, setView] = useState(viewRef.current)
+      const toastId = useRef(0)
+
+      const toast = useCallback((text) => {
+        const id = ++toastId.current
+        setToasts((list) => [...list, { id, text }])
+        setTimeout(() => setToasts((list) => list.filter((item) => item.id !== id)), 2600)
+      }, [])
+
+      const patchView = useCallback((next) => {
+        viewRef.current = Object.assign({}, viewRef.current, next)
+        setView(viewRef.current)
+      }, [])
+
+      const fitView = useCallback((layout) => {
+        const viewport = viewportRef.current
+        if (!viewport || !layout) return
+        const width = viewport.clientWidth || 800
+        const height = viewport.clientHeight || 600
+        const scale = clamp(Math.min(width / layout.width, height / layout.height) * 0.88, 0.32, 2.4)
+        const ox = (width - layout.width * scale) / 2
+        const oy = (height - layout.height * scale) / 2
+        patchView({ ox, oy, scale })
+      }, [patchView])
+
+      const load = useCallback(async (opts) => {
+        const silent = opts && opts.silent
+        if (!silent) setError('')
+        try {
+          const sid = (opts && opts.sessionId) || sessionId || store.sessionId || ''
+          const response = await api(`/graph?sessionId=${encodeURIComponent(sid)}&scope=${encodeURIComponent((opts && opts.scope) || scope)}`)
+          setData(response)
+          if (!sid && response.sessions && response.sessions.length) {
+            const first = response.sessions[0]
+            setSessionId(first.id)
+            store.sessionId = first.id
+          }
+          if (!silent || !viewRef.current.fitted) {
+            fitView(response.layout)
+            viewRef.current.fitted = true
+          }
+        } catch (err) {
+          setError(String(err && err.message ? err.message : err))
+        }
+      }, [fitView, scope, sessionId])
+
+      useEffect(() => { void load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+      useEffect(() => {
+        const timer = setInterval(() => { if (!busy) void load({ silent: true, sessionId }) }, 6000)
+        return () => clearInterval(timer)
+      }, [busy, load, sessionId])
+
+      useEffect(() => {
+        const onKey = (event) => {
+          if (event.key === 'Escape') { setSelected(null); setSettingsOpen(false); setDigestOpen(false); setSearch('') }
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [])
+
+      const nodes = data && data.layout ? data.layout.nodes : []
+      const edges = data && data.layout ? data.layout.edges : []
+      const session = (data && data.session) || { enabled: true, tray: [] }
+      const config = (data && data.config) || {}
+      const scale = view.scale
+      const tier = tierOf(scale)
+
+      const searchKey = search.trim().toLowerCase()
+      const matched = new Set()
+      if (searchKey) {
+        for (const node of nodes) {
+          const haystack = `${node.title} ${node.summary} ${(node.keywords || []).join(' ')}`.toLowerCase()
+          if (haystack.includes(searchKey)) matched.add(node.id)
+        }
+      }
+
+      const nodeById = new Map(nodes.map((node) => [node.id, node]))
+      const edgeById = new Map(edges.map((edge) => [edge.id, edge]))
+      const selectedNode = selected && selected.type === 'node' ? nodeById.get(selected.id) : null
+      const selectedEdge = selected && selected.type === 'edge' ? edgeById.get(selected.id) : null
+
+      const onWheel = (event) => {
+        event.preventDefault()
+        const viewport = viewportRef.current
+        if (!viewport) return
+        const rect = viewport.getBoundingClientRect()
+        const px = event.clientX - rect.left
+        const py = event.clientY - rect.top
+        const current = viewRef.current
+        const nextScale = clamp(current.scale * Math.exp(-event.deltaY * 0.0012), 0.3, 2.4)
+        const ratio = nextScale / current.scale
+        patchView({
+          scale: nextScale,
+          ox: px - (px - current.ox) * ratio,
+          oy: py - (py - current.oy) * ratio,
+        })
+      }
+
+      const onPointerDown = (event) => {
+        if (event.button !== 0) return
+        if (event.target && event.target.closest && event.target.closest('.mb-node')) return
+        if (event.target && event.target.closest && event.target.closest('.mb-edge-hit')) return
+        dragRef.current = { x: event.clientX, y: event.clientY, ox: viewRef.current.ox, oy: viewRef.current.oy, moved: false }
+        event.currentTarget.classList.add('dragging')
+      }
+
+      const onPointerMove = (event) => {
+        const drag = dragRef.current
+        if (!drag) return
+        const dx = event.clientX - drag.x
+        const dy = event.clientY - drag.y
+        if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true
+        patchView({ ox: drag.ox + dx, oy: drag.oy + dy })
+      }
+
+      const endDrag = (event) => {
+        if (event && event.currentTarget && event.currentTarget.classList) event.currentTarget.classList.remove('dragging')
+        dragRef.current = null
+      }
+
+      const addToTray = async (nodeId) => {
+        if (!sessionId) { toast('先在顶部选择/打开一个会话'); return }
+        try {
+          await api('/tray', { method: 'POST', body: JSON.stringify({ sessionId, add: nodeId }) })
+          await load({ silent: true, sessionId })
+          const node = nodeById.get(nodeId)
+          toast(`已把「${node ? node.title : nodeId}」放进托盘，会进入本轮记忆简报`)
+        } catch (err) { toast(String(err.message || err)) }
+      }
+
+      const removeFromTray = async (nodeId) => {
+        try {
+          await api('/tray', { method: 'POST', body: JSON.stringify({ sessionId, remove: nodeId }) })
+          await load({ silent: true, sessionId })
+        } catch (err) { toast(String(err.message || err)) }
+      }
+
+      const runExtract = async () => {
+        if (!sessionId) { toast('先在顶部选择/打开一个会话'); return }
+        setBusy('extract')
+        try {
+          const result = await api('/extract', { method: 'POST', body: JSON.stringify({ sessionId, force: true }) })
+          if (result.ok) {
+            toast(`AI 记下了 ${result.created + result.updated} 条记忆${result.created ? '，新增 ' + result.created + ' 条' : ''}`)
+          } else {
+            toast(`总结失败：${result.error || '未知原因'}`)
+          }
+          await load({ silent: true, sessionId })
+        } catch (err) { toast(String(err.message || err)) } finally { setBusy('') }
+      }
+
+      const undoLast = async () => {
+        if (!confirmUndo) { setConfirmUndo(true); setTimeout(() => setConfirmUndo(false), 3000); return }
+        setConfirmUndo(false)
+        setBusy('undo')
+        try {
+          const result = await api('/rollback', { method: 'POST', body: JSON.stringify({ sessionId }) })
+          toast(`已撤销上一批：移除 ${result.removed} 条新建，回滚 ${result.restored} 条修改`)
+          await load({ silent: true, sessionId })
+        } catch (err) { toast(String(err.message || err)) } finally { setBusy('') }
+      }
+
+      const exportAll = async () => {
+        try {
+          const result = await api('/export')
+          const blob = new Blob([JSON.stringify(result.graph, null, 2)], { type: 'application/json' })
+          const url = URL.createObjectURL(blob)
+          const link = document.createElement('a')
+          link.href = url
+          link.download = `memory-bubble-${Date.now()}.json`
+          link.click()
+          setTimeout(() => URL.revokeObjectURL(url), 2000)
+          toast(result.file ? `已导出，同时保存到 ${result.file}` : '已导出记忆图')
+        } catch (err) { toast(String(err.message || err)) }
+      }
+
+      const importFile = (event) => {
+        const file = event.target.files && event.target.files[0]
+        event.target.value = ''
+        if (!file) return
+        file.text().then(async (text) => {
+          try {
+            const report = await api('/import', { method: 'POST', body: JSON.stringify({ graph: JSON.parse(text) }) })
+            toast(`继承完成：合并 ${report.report.nodes} 条记忆、${report.report.edges} 条关系`)
+            await load({ silent: true, sessionId })
+          } catch (err) { toast(String(err.message || err)) }
+        }).catch((err) => toast(String(err.message || err)))
+      }
+
+      const sessionOptions = (data && data.sessions) || []
+      const trayNodes = (session.tray || []).map((id) => nodeById.get(id)).filter(Boolean)
+
+      const header = h('div', { className: 'mb-header' },
+        h('div', { className: 'mb-brand' },
+          h('div', { className: 'mb-logo' }),
+          h('div', null,
+            h('div', { className: 'mb-title' }, '忆泡', h('small', null, 'MEMORY BUBBLE')),
+            h('div', { className: 'mb-sub' }, '把对话里的记忆，养在一张会呼吸的图里'))),
+        h('div', { className: 'mb-spacer' }),
+        sessionOptions.length
+          ? h('select', {
+            value: sessionId,
+            onChange: (event) => {
+              const next = event.target.value
+              setSessionId(next)
+              store.sessionId = next
+              void load({ sessionId: next })
+            },
+            style: { maxWidth: 210, border: '1px solid var(--mb-line)', background: 'var(--mb-card)', color: 'var(--mb-ink)', borderRadius: 999, padding: '6px 10px', fontSize: 12 },
+          }, sessionOptions.map((item) => h('option', { key: item.id, value: item.id },
+            `${item.title || item.id.slice(0, 8)} · ${item.extractCount || 0} 次`)))
+          : null,
+        h('div', { className: 'mb-seg' },
+          h('button', { className: scope === 'all' ? 'on' : '', onClick: () => { setScope('all'); void load({ scope: 'all' }) } }, '全部'),
+          h('button', { className: scope === 'session' ? 'on' : '', onClick: () => { setScope('session'); void load({ scope: 'session' }) } }, '本会话')),
+        h('div', { className: 'mb-search' },
+          h('span', { style: { opacity: 0.55 } }, '⌕'),
+          h('input', {
+            value: search,
+            placeholder: '搜索记忆、关键词或摘要…',
+            onChange: (event) => setSearch(event.target.value),
+          }),
+          matched.size && searchKey ? h('span', { style: { fontSize: 11, color: 'var(--mb-coral)', whiteSpace: 'nowrap' } }, `命中 ${matched.size} 条`) : null),
+        h('button', { className: 'mb-btn' + (confirmUndo ? ' danger' : ''), onClick: undoLast, disabled: busy === 'undo', title: '撤销最近一次 AI 总结' }, confirmUndo ? '再点一次确认' : '撤销'),
+        h('button', { className: 'mb-btn primary', onClick: runExtract, disabled: busy === 'extract', title: '立即用当前模型总结一段新记忆' }, busy === 'extract' ? '总结中…' : '立即总结'),
+        h('button', { className: 'mb-icon-btn', onClick: () => setDigestOpen(!digestOpen), title: '查看本轮记忆简报' }, '☰'),
+        h('button', { className: 'mb-icon-btn', onClick: () => setSettingsOpen(!settingsOpen), title: '设置' }, '⚙'),
+        h('label', { className: 'mb-icon-btn', title: '导入记忆图（继承）', style: { cursor: 'pointer' } },
+          '⤓', h('input', { type: 'file', accept: 'application/json', style: { display: 'none' }, onChange: importFile })),
+        h('button', { className: 'mb-icon-btn', onClick: exportAll, title: '导出记忆图' }, '⤒'))
+
+      const stage = h('div', { className: 'mb-stage', style: { width: 760, height: 560, transform: `translate(${view.ox}px, ${view.oy}px) scale(${scale})` } },
+        h('svg', { className: 'mb-edges', width: 760, height: 560 },
+          edges.map((edge) => {
+            const from = nodeById.get(edge.from)
+            const to = nodeById.get(edge.to)
+            if (!from || !to) return null
+            const conflict = edge.conflict === true
+            const hot = selected && selected.type === 'edge' && selected.id === edge.id
+            return h('g', { key: edge.id },
+              h('line', {
+                x1: from.x, y1: from.y, x2: to.x, y2: to.y,
+                className: 'mb-edge-line' + (conflict ? ' conflict' : '') + (hot ? ' hot' : ''),
+              }),
+              h('line', {
+                x1: from.x, y1: from.y, x2: to.x, y2: to.y,
+                className: 'mb-edge-hit',
+                onClick: (event) => { event.stopPropagation(); setSelected({ type: 'edge', id: edge.id }) },
+              }))
+          })),
+        nodes.map((node) => {
+          const palette = tonePalette(node.tone)
+          const dim = searchKey && matched.size && !matched.has(node.id)
+          const pinned = (session.tray || []).includes(node.id)
+          const isSelected = selected && selected.type === 'node' && selected.id === node.id
+          return h('div', {
+            key: node.id,
+            className: 'mb-node' + (dim ? ' dimmed' : '') + (isSelected ? ' sel' : '') + (pinned ? ' pinned' : ''),
+            style: {
+              left: node.x - node.r,
+              top: node.y - node.r,
+              width: node.r * 2,
+              height: node.r * 2,
+              background: `radial-gradient(circle at 32% 26%, rgba(255,255,255,.88), rgba(255,255,255,0) 46%), radial-gradient(circle at 52% 55%, ${palette[0]}, ${palette[1]})`,
+              opacity: tier.key === 'far' ? 0.92 : 1,
+            },
+            onClick: (event) => {
+              event.stopPropagation()
+              if (event.shiftKey) { void addToTray(node.id); return }
+              setSelected({ type: 'node', id: node.id })
+            },
+            title: node.title,
+          }, tier.key === 'near'
+            ? h('div', { style: { position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', borderRadius: '50%' } },
+              h('span', { style: { fontSize: clamp(node.r * 0.32, 9, 15), color: 'rgba(96,56,36,.72)', fontWeight: 600, padding: '0 6px', textAlign: 'center', lineHeight: 1.2 } }, node.title))
+            : null)
+        }),
+        nodes.map((node) => {
+          if (tier.key === 'far') return null
+          const dim = searchKey && matched.size && !matched.has(node.id)
+          if (dim) return null
+          const maxWidth = node.r * 2 + 70
+          return h('div', {
+            key: node.id + '-label',
+            className: 'mb-label',
+            style: {
+              left: node.x - maxWidth / 2,
+              top: node.y + node.r + 4,
+              width: maxWidth,
+              fontSize: 12 / scale,
+              opacity: tier.key === 'far' ? 0 : 1,
+            },
+          },
+            tier.key === 'mid' ? shortTitle(node.title) : node.title,
+            tier.key === 'near' && (node.keywords || []).length
+              ? h('span', { className: 'kw' }, (node.keywords || []).slice(0, 3).map((keyword) => `#${keyword}`).join(' '))
+              : null)
+        }))
+
+      const viewport = h('div', {
+        ref: viewportRef,
+        className: 'mb-viewport',
+        onWheel,
+        onPointerDown,
+        onPointerMove,
+        onPointerUp: endDrag,
+        onPointerLeave: endDrag,
+        onDoubleClick: () => fitView(data && data.layout),
+      },
+        nodes.length ? stage : h('div', { className: 'mb-empty' },
+          h('div', { className: 'bubble' }),
+          h('div', null, '这里还没有记忆泡泡'),
+          h('div', { style: { fontSize: 12, opacity: 0.75, textAlign: 'center', maxWidth: 340, lineHeight: 1.7 } },
+            '正常聊几轮后会自动提炼记忆点；现在也可以点右上角「立即总结」或「新增记忆」手动种下第一个泡泡。')),
+        h('div', { className: 'mb-legend' }, h('span', null, '大 = 重要'), h('span', { style: { opacity: 0.5 } }, '·'), h('span', null, '中心 = 高频'), h('span', { style: { opacity: 0.5 } }, '·'), h('b', null, tier.label)),
+        h('div', { className: 'mb-zoom-pill' }, `${Math.round(scale * 100)}% · 滚轮缩放 · 拖拽平移 · 双击适应`),
+        h('button', {
+          className: 'mb-btn primary',
+          style: { position: 'absolute', right: 18, top: 18, boxShadow: '0 10px 26px rgba(244,113,77,.3)' },
+          onClick: () => setSelected({ type: 'node', id: '__new__' }),
+        }, '＋ 新增记忆'))
+
+      const tray = h('div', { className: 'mb-tray' },
+        h('div', { className: 'mb-tray-label' },
+          '记忆托盘', h('span', { className: 'mb-tray-badge' }, String((session.tray || []).length)),
+          h('span', { style: { opacity: 0.65, fontSize: 11 } }, '点「引用到本轮」或 Shift 点击泡泡')),
+        h('div', { className: 'mb-tray-chips' },
+          trayNodes.length
+            ? trayNodes.map((node) => h(Chip, { key: node.id, node, onRemove: () => removeFromTray(node.id) }))
+            : h('span', { style: { fontSize: 11.5, color: 'var(--mb-ink-soft)', opacity: 0.7 } }, '托盘里的记忆会被钉在本轮简报最上面；不选则按重要度自动取前几条。')),
+        sessionId
+          ? h('label', { className: 'mb-tray-label', title: '关闭后不会再自动总结这个会话' },
+            h(Switch, { on: session.enabled !== false, onClick: async () => {
+              try {
+                await api('/session', { method: 'POST', body: JSON.stringify({ sessionId, enabled: session.enabled === false }) })
+                await load({ silent: true, sessionId })
+                toast(session.enabled === false ? '已重新开启自动总结' : '已暂停自动总结，随时可手动总结')
+              } catch (err) { toast(String(err.message || err)) }
+            } }), '自动总结')
+          : null,
+        h('button', { className: 'mb-btn ghost', disabled: !sessionId, onClick: () => { setDigestOpen(true) } }, '预览简报'),
+        h('div', { style: { fontSize: 11, color: 'var(--mb-ink-soft)', whiteSpace: 'nowrap' } },
+          session.pending ? '本轮总结中…' : session.lastError ? `上次总结失败：${String(session.lastError).slice(0, 22)}` : session.lastExtractAt ? `上次总结 ${fmtDate(session.lastExtractAt)}` : '尚未总结'))
+
+      const card = selectedNode
+        ? h(NodeCard, { key: selectedNode.id === '__new__' ? 'new' : selectedNode.id, node: selectedNode, sessionId, onClose: () => setSelected(null), onReload: (silent) => load({ silent: true, sessionId }), toast })
+        : selectedEdge
+          ? h(EdgeCard, { key: selectedEdge.id, edge: selectedEdge, sessionId, onClose: () => setSelected(null), onReload: (silent) => load({ silent: true, sessionId }), toast })
+          : null
+
+      const pop = settingsOpen
+        ? h('div', { className: 'mb-pop' }, h(ConfigForm, { config, onSaved: (next) => { setData((current) => current ? Object.assign({}, current, { config: next }) : current); toast('设置已保存') }, toast }))
+        : null
+
+      const drawer = digestOpen
+        ? h('div', { className: 'mb-drawer' },
+          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
+            h('div', { style: { fontSize: 13, fontWeight: 600 } }, '本轮记忆简报'),
+            h('button', { className: 'mb-close', style: { position: 'static' }, onClick: () => setDigestOpen(false) }, '✕')),
+          h('pre', null, (data && data.digest) || '（还没有简报：先聊几轮，或点「立即总结」）'))
+        : null
+
+      if (error && !data) {
+        return h('div', { className: 'mb-root' },
+          h('div', { className: 'mb-empty' }, h('div', { className: 'bubble' }), h('div', null, '忆泡加载失败'), h('div', { style: { fontSize: 12, opacity: 0.8 } }, error),
+            h('button', { className: 'mb-btn primary', onClick: () => void load() }, '重试')))
+      }
+
+      return h('div', { className: 'mb-root', 'data-mb-theme': scheme },
+        header,
+        viewport,
+        tray,
+        card,
+        pop,
+        drawer,
+        h(ToastStack, { toasts }))
+    }
+
+    /* ------------------------------------------------------------ 详情卡 */
+
+    function NodeCard({ node, sessionId, onClose, onReload, toast }) {
+      const isNew = node.id === '__new__'
+      const [title, setTitle] = useState(isNew ? '' : node.title)
+      const [summary, setSummary] = useState(isNew ? '' : node.summary || '')
+      const [keywords, setKeywords] = useState(isNew ? '' : (node.keywords || []).join('、'))
+      const [importance, setImportance] = useState(isNew ? 55 : node.importance || 50)
+      const [kind, setKind] = useState(isNew ? 'fact' : node.kind || 'fact')
+      const [saving, setSaving] = useState(false)
+      const [deleteArmed, setDeleteArmed] = useState(false)
+
+      const save = async () => {
+        if (!title.trim()) { toast('标题不能为空'); return }
+        setSaving(true)
+        try {
+          if (isNew) {
+            await api('/node/create', { method: 'POST', body: JSON.stringify({ title, summary, keywords: keywords.split(/[、,，\s]+/).filter(Boolean), importance, kind, sessionId: sessionId || 'manual' }) })
+            toast('已种下一颗新泡泡')
+          } else {
+            await api('/node', { method: 'POST', body: JSON.stringify({ id: node.id, sessionId, patch: { title, summary, keywords: keywords.split(/[、,，\s]+/).filter(Boolean), importance, kind } }) })
+            toast('已保存，泡泡大小与简报同步更新')
+          }
+          onClose()
+          await onReload(true)
+        } catch (err) { toast(String(err.message || err)) } finally { setSaving(false) }
+      }
+
+      const remove = async () => {
+        if (!deleteArmed) {
+          setDeleteArmed(true)
+          setTimeout(() => setDeleteArmed(false), 3000)
+          return
+        }
+        try {
+          await api('/node/delete', { method: 'POST', body: JSON.stringify({ id: node.id, sessionId }) })
+          toast('已删除这条记忆')
+          onClose()
+          await onReload(true)
+        } catch (err) { toast(String(err.message || err)) }
+      }
+
+      const quote = async () => {
+        if (!sessionId) { toast('先在顶部选择一个会话'); return }
+        try {
+          await api('/tray', { method: 'POST', body: JSON.stringify({ sessionId, add: node.id }) })
+          toast('已放进记忆托盘')
+          await onReload(true)
+        } catch (err) { toast(String(err.message || err)) }
+      }
+
+      return h('div', { className: 'mb-card', onClick: (event) => event.stopPropagation() },
+        h('button', { className: 'mb-close', onClick: onClose }, '✕'),
+        h('div', { className: 'meta' }, isNew ? '新记忆' : `${fmtDate(node.created)} · 出现 ${node.hits || 1} 次 · ${KIND_LABELS[node.kind] || '事实'}`),
+        h('div', { className: 'section-label' }, '标题'),
+        h('input', { type: 'text', value: title, maxLength: 40, placeholder: '不超过 12 字最好认', onChange: (event) => setTitle(event.target.value) }),
+        h('div', { className: 'section-label' }, '记忆本身'),
+        h('textarea', { value: summary, maxLength: 600, placeholder: '1–2 句，离开对话也能看懂', onChange: (event) => setSummary(event.target.value) }),
+        h('div', { className: 'section-label' }, '关键词（顿号或空格分隔）'),
+        h('input', { type: 'text', value: keywords, placeholder: '猫咖、年糕、橘猫', onChange: (event) => setKeywords(event.target.value) }),
+        h('div', { className: 'section-label' }, '类型'),
+        h('select', { value: kind, onChange: (event) => setKind(event.target.value) },
+          Object.keys(KIND_LABELS).map((key) => h('option', { key, value: key }, KIND_LABELS[key]))),
+        h('div', { className: 'section-label' }, `重要性 ${importance}`, isNew ? '' : '（越大越重要，影响泡泡大小与简报排序）'),
+        h('div', { className: 'row' },
+          h('input', { type: 'range', min: 0, max: 100, value: importance, onChange: (event) => setImportance(Number(event.target.value)) }),
+          h('span', { style: { fontSize: 12, color: 'var(--mb-coral)', fontWeight: 600, minWidth: 26, textAlign: 'right' } }, String(importance))),
+        isNew ? null : h('div', { style: { fontSize: 11, color: 'var(--mb-ink-soft)', lineHeight: 1.6 } },
+          '位置由出现频率和关系决定、不能手动拖动；大小代表重要性，可以拖动上面的滑杆修改权重。'),
+        h('div', { className: 'actions' },
+          isNew ? null : h('button', { className: 'mb-btn ghost', onClick: quote }, '引用到本轮'),
+          h('button', { className: 'mb-btn primary', onClick: save, disabled: saving }, saving ? '保存中…' : isNew ? '种下泡泡' : '保存修改'),
+          isNew ? null : h('button', { className: 'mb-btn danger', onClick: remove }, deleteArmed ? '再点一次确认删除' : '删除')))
+    }
+
+    function EdgeCard({ edge, sessionId, onClose, onReload, toast }) {
+      const [summary, setSummary] = useState(edge.summary || '')
+      const [relation, setRelation] = useState(edge.relation || '相关')
+      const [conflict, setConflict] = useState(edge.conflict === true)
+      const [saving, setSaving] = useState(false)
+      const [armed, setArmed] = useState(false)
+
+      const save = async () => {
+        setSaving(true)
+        try {
+          await api('/edge', { method: 'POST', body: JSON.stringify({ id: edge.id, sessionId, patch: { summary, relation, conflict } }) })
+          toast(conflict ? '已保存；仍有冲突，会提醒模型在后续思考中降低权重' : '已保存，冲突提示已清除')
+          onClose()
+          await onReload(true)
+        } catch (err) { toast(String(err.message || err)) } finally { setSaving(false) }
+      }
+
+      const reverify = async () => {
+        try {
+          await api('/edge', { method: 'POST', body: JSON.stringify({ id: edge.id, sessionId, patch: { conflict: false } }) })
+          toast('已核验：冲突提示已清除（仅本机记录）')
+          setConflict(false)
+          await onReload(true)
+        } catch (err) { toast(String(err.message || err)) }
+      }
+
+      const remove = async () => {
+        if (!armed) { setArmed(true); setTimeout(() => setArmed(false), 3000); return }
+        try {
+          await api('/edge/delete', { method: 'POST', body: JSON.stringify({ id: edge.id, sessionId }) })
+          toast('已删除这条关系')
+          onClose()
+          await onReload(true)
+        } catch (err) { toast(String(err.message || err)) }
+      }
+
+      return h('div', { className: 'mb-card', onClick: (event) => event.stopPropagation() },
+        h('button', { className: 'mb-close', onClick: onClose }, '✕'),
+        h('div', { className: 'meta' }, '关系详情'),
+        conflict
+          ? h('div', { style: { background: 'rgba(201,95,66,.12)', border: '1px solid rgba(201,95,66,.35)', borderRadius: 10, padding: '8px 10px', fontSize: 11.5, lineHeight: 1.6, color: '#b4553b', marginBottom: 6 } },
+            '⚠ 这两条记忆存在冲突。后续思考会降低该关系权重；消除冲突后警告会消失。')
+          : null,
+        h('div', { className: 'section-label' }, '关系'),
+        h('select', { value: relation, onChange: (event) => setRelation(event.target.value) },
+          ['相关', '因果', '印证', '同主题', '对立', '经历'].map((item) => h('option', { key: item, value: item }, item))),
+        h('div', { className: 'section-label' }, '关系说明'),
+        h('textarea', { value: summary, maxLength: 400, placeholder: '这两条记忆为什么相连？有冲突就写清冲突在哪。', onChange: (event) => setSummary(event.target.value) }),
+        h('label', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 12, fontSize: 12 } },
+          '标记为「有冲突」',
+          h(Switch, { on: conflict, onClick: () => setConflict(!conflict) })),
+        h('div', { className: 'actions' },
+          h('button', { className: 'mb-btn ghost', onClick: reverify }, '重新校验'),
+          h('button', { className: 'mb-btn primary', onClick: save, disabled: saving }, saving ? '保存中…' : '保存'),
+          h('button', { className: 'mb-btn danger', onClick: remove }, armed ? '再点一次确认' : '删除')))
+    }
+
+    /* ------------------------------------------------------------ 设置 */
+
+    function ConfigForm({ config, onSaved, toast }) {
+      const [auto, setAuto] = useState(config.auto !== false)
+      const [debounce, setDebounce] = useState(Math.round((config.debounceMs || 15000) / 1000))
+      const [minInterval, setMinInterval] = useState(Math.round((config.minIntervalMs || 90000) / 1000))
+      const [maxChars, setMaxChars] = useState(config.maxTranscriptChars || 6000)
+      const [injection, setInjection] = useState(config.injection || 'digest')
+      const [saving, setSaving] = useState(false)
+
+      const save = async () => {
+        setSaving(true)
+        try {
+          const result = await api('/config', { method: 'POST', body: JSON.stringify({ config: { auto, debounceMs: debounce * 1000, minIntervalMs: minInterval * 1000, maxTranscriptChars: maxChars, injection } }) })
+          onSaved(result.config)
+        } catch (err) { toast(String(err.message || err)) } finally { setSaving(false) }
+      }
+
+      return h('div', null,
+        h('div', { style: { fontSize: 13, fontWeight: 600, marginBottom: 4 } }, '忆泡设置'),
+        h('label', null, h('span', null, '自动总结'), h(Switch, { on: auto, onClick: () => setAuto(!auto) })),
+        h('label', null, h('span', null, '停手后等待（秒）'), h('input', { type: 'number', min: 1, max: 300, value: debounce, onChange: (event) => setDebounce(Number(event.target.value) || 1) })),
+        h('label', null, h('span', null, '两次总结最小间隔（秒）'), h('input', { type: 'number', min: 5, max: 3600, value: minInterval, onChange: (event) => setMinInterval(Number(event.target.value) || 5) })),
+        h('label', null, h('span', null, '转录长度上限（字符）'), h('input', { type: 'number', min: 500, max: 30000, value: maxChars, onChange: (event) => setMaxChars(Number(event.target.value) || 6000) })),
+        h('label', null, h('span', null, '注入方式'),
+          h('select', { value: injection, onChange: (event) => setInjection(event.target.value) },
+            h('option', { value: 'digest' }, '稳定简报（推荐）'),
+            h('option', { value: 'tray' }, '只注入托盘'),
+            h('option', { value: 'off' }, '不注入'))),
+        h('div', { style: { display: 'flex', justifyContent: 'flex-end', marginTop: 8 } },
+          h('button', { className: 'mb-btn primary', onClick: save, disabled: saving }, saving ? '保存中…' : '保存设置')))
+    }
+
+    function SettingsSection({ ctx }) {
+      const [config, setConfig] = useState(null)
+      const [toastText, setToastText] = useState('')
+      useEffect(() => {
+        api('/config').then((result) => setConfig(result.config)).catch(() => setConfig(null))
+      }, [])
+      if (!config) return h('div', { className: 'mb-settings' }, h('p', null, '忆泡未连接（插件可能未启用）。'))
+      return h('div', { className: 'mb-settings', 'data-mb-theme': document.documentElement.dataset.mbTheme || 'light' },
+        h('h4', null, '忆泡 Memory Bubble'),
+        h('p', null, '把每天和 AI 的对话沉淀成一张可管理、可继承的记忆泡泡图。位置由出现频率决定，大小由重要性决定。'),
+        h(ConfigForm, {
+          config,
+          onSaved: (next) => { setConfig(next); setToastText('设置已保存'); setTimeout(() => setToastText(''), 2200) },
+          toast: (text) => { setToastText(text); setTimeout(() => setToastText(''), 2200) },
+        }),
+        toastText ? h('div', { className: 'hint' }, toastText) : null,
+        h('div', { style: { display: 'flex', gap: 10, marginTop: 16 } },
+          h('button', { className: 'mb-btn ghost', onClick: async () => {
+            try {
+              const result = await api('/export')
+              const blob = new Blob([JSON.stringify(result.graph, null, 2)], { type: 'application/json' })
+              const url = URL.createObjectURL(blob)
+              const link = document.createElement('a')
+              link.href = url
+              link.download = `memory-bubble-${Date.now()}.json`
+              link.click()
+              setTimeout(() => URL.revokeObjectURL(url), 2000)
+            } catch { /* ignore */ }
+          } }, '导出记忆图'),
+          h('label', { className: 'mb-btn ghost', style: { cursor: 'pointer' } }, '导入记忆图',
+            h('input', {
+              type: 'file', accept: 'application/json', style: { display: 'none' },
+              onChange: async (event) => {
+                const file = event.target.files && event.target.files[0]
+                event.target.value = ''
+                if (!file) return
+                try {
+                  const text = await file.text()
+                  const result = await api('/import', { method: 'POST', body: JSON.stringify({ graph: JSON.parse(text) }) })
+                  setToastText(`继承完成：${result.report.nodes} 条记忆、${result.report.edges} 条关系`)
+                } catch (error) { setToastText(String(error.message || error)) }
+                setTimeout(() => setToastText(''), 2600)
+              },
+            }))))
+    }
+
+    /* ------------------------------------------------------------ 输入框小药丸 */
+
+    function TriggerPill({ ctx, ...props }) {
+      const sessionId = props && props.sessionId
+      useEffect(() => {
+        if (sessionId && store.sessionId !== sessionId) store.sessionId = sessionId
+      }, [sessionId])
+      const [count, setCount] = useState(null)
+      useEffect(() => {
+        let alive = true
+        const load = async () => {
+          try {
+            const sid = sessionId || store.sessionId || ''
+            const response = await api(`/graph?sessionId=${encodeURIComponent(sid)}&scope=all`)
+            if (alive) setCount(response.stats ? response.stats.nodes : null)
+          } catch { if (alive) setCount(null) }
+        }
+        void load()
+        const timer = setInterval(load, 12000)
+        return () => { alive = false; clearInterval(timer) }
+      }, [sessionId])
+      const open = () => {
+        if (sessionId) store.sessionId = sessionId
+        try { const layout = ctx.get('layout'); if (layout && layout.selectPanel) { layout.selectPanel(PANEL_ID); return } } catch { /* ignore */ }
+        try { window.dispatchEvent(new CustomEvent('dsh:select-panel', { detail: PANEL_ID })) } catch { /* ignore */ }
+      }
+      return h('button', { className: 'mb-trigger', onClick: open, title: '打开忆泡图谱（记忆会随对话自动注入）' },
+        h('i', { className: 'dot' }),
+        '忆泡',
+        h('b', null, count === null ? '·' : String(count)))
+    }
+
+    /* ------------------------------------------------------------ 注册 */
+
+    function apply(ctx) {
+      ensureStyle()
+      if (typeof document !== 'undefined' && !document.documentElement.dataset.mbTheme) {
+        document.documentElement.dataset.mbTheme = 'light'
+      }
+      try {
+        const theme = ctx.get('theme')
+        if (theme && theme.getTheme) {
+          document.documentElement.dataset.mbTheme = normalizeScheme(theme.getTheme()) === 'dark' ? 'dark' : 'light'
+        }
+        ctx.on('theme/change', (snapshot) => {
+          document.documentElement.dataset.mbTheme = normalizeScheme(snapshot) === 'dark' ? 'dark' : 'light'
+        })
+      } catch { /* ignore */ }
+
+      const inject = (slot, options, component, label) => {
+        try {
+          const dispose = ctx.slots.inject(slot, () => ctx.slots.register(options, (props) => h(component, Object.assign({ ctx }, props))))
+          if (typeof dispose === 'function') return dispose
+        } catch (error) {
+          console.warn('[memory-bubble] register slot failed:', slot, error && error.message ? error.message : error)
+        }
+        return undefined
+      }
+
+      inject('sidebar.panellist', { name: 'sidebar.panellist', id: PANEL_ID, order: 22, label: () => '忆泡' }, GraphPanel, '忆泡')
+      inject('main', { name: 'main', key: PANEL_ID }, GraphPanel, '忆泡')
+      inject('conversation.input.left', { name: 'conversation.input.left', id: PANEL_ID + '-trigger', order: 45, label: () => '忆泡' }, TriggerPill, '忆泡')
+      inject('settings.section', { name: 'settings.section', id: PANEL_ID, order: 70, label: () => '忆泡' }, SettingsSection, '忆泡')
+    }
+
+    exports.apply = apply
+    exports.inject = ['slots']
+    return module.exports
+  },
+})
