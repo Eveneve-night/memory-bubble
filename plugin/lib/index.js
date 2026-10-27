@@ -200,6 +200,7 @@ export function apply(ctx) {
         existing: existingForPrompt(),
         transcript,
         sessionNote: sess.digest && sess.digest.text ? sess.digest.text.replace(/【忆泡记忆简报】[^\n]*\n?/, '') : '',
+        maxNew: state.config.maxPerExtraction,
       })
       const raw = await callModel(prompt)
       const extraction = parseExtraction(raw)
@@ -512,6 +513,8 @@ export function apply(ctx) {
         else if (type === 'string') state.config[key] = String(patch[key]).slice(0, 40)
       }
     }
+    state.config.maxPerExtraction = clamp(Math.round(Number(state.config.maxPerExtraction) || 3), 1, 5)
+    state.config.maxTotalNodes = clamp(Math.round(Number(state.config.maxTotalNodes) || 300), 20, 2000)
     await persist()
     return html(res).send(200, { ok: true, config: state.config })
   })

@@ -19,8 +19,12 @@ export const STATE_VERSION = 1
 
 export function defaultConfig() {
   return {
-    /** 每回合结束后是否自动总结（可在面板里逐会话开关） */
+    /** 读取对话并自动生成记忆的总开关（可在面板里逐会话覆盖） */
     auto: true,
+    /** 每轮总结最多生成几条新记忆（update 不计入） */
+    maxPerExtraction: 3,
+    /** 记忆总量上限，达到后只允许更新/合并，不再新增 */
+    maxTotalNodes: 300,
     /** 最后一次对话事件之后静默多久才抽取，避免边聊边抽 */
     debounceMs: 15000,
     /** 两次抽取之间的最小间隔 */
@@ -283,7 +287,11 @@ function findExisting(state, cand) {
  * extraction = { memories: [...], relations: [...] }
  */
 export function mergeExtraction(state, sessionId, extraction, now = nowIso()) {
-  const batch = { id: `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, sessionId, at: now, created: [], updated: [], edges: [], digestPrev: null }
+  const batch = { id: `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, sessionId, at: now, created: [], updated: [], edges: [], skipped: 0, digestPrev: null }
+  const cfg = state.config || defaultConfig()
+  const createLimit = clamp(Number(cfg.maxPerExtraction) || 3, 1, 5)
+  const totalCap = clamp(Number(cfg.maxTotalNodes) || 300, 1, 100000)
+  let createdCount = 0
   const sess = sessionState(state, sessionId)
   batch.digestPrev = sess.digest ? { text: sess.digest.text, nodeIds: sess.digest.nodeIds.slice(), updatedAt: sess.digest.updatedAt } : null
   const refs = new Map()
@@ -303,6 +311,13 @@ export function mergeExtraction(state, sessionId, extraction, now = nowIso()) {
     let node = raw && raw.id && state.nodes[raw.id] ? state.nodes[raw.id] : null
     if (!node) node = findExisting(state, cand)
     const isUpdate = Boolean(node)
+    if (!isUpdate) {
+      if (createdCount >= createLimit || Object.keys(state.nodes).length >= totalCap) {
+        batch.skipped += 1
+        return
+      }
+      createdCount += 1
+    }
     if (isUpdate) {
       batch.updated.push({ id: node.id, prev: { title: node.title, summary: node.summary, keywords: node.keywords.slice(), importance: node.importance } })
       node.title = cand.title || node.title
@@ -500,8 +515,9 @@ export const EXTRACTION_SYSTEM = [
   '5. importance：会影响长期行为/身份/关系的 70-95；一般偏好 40-70；一次性背景 20-40。',
 ].join('\n')
 
-export function buildExtractionPrompt({ existing, transcript, sessionNote }) {
+export function buildExtractionPrompt({ existing, transcript, sessionNote, maxNew }) {
   const cfgLines = []
+  const limit = clamp(Number(maxNew) || 3, 1, 5)
   const existingNodes = Array.isArray(existing) ? existing : []
   cfgLines.push('已有记忆（用于去重/更新，格式：id｜类型｜标题：摘要｜关键词）：')
   if (!existingNodes.length) cfgLines.push('（无）')
@@ -515,6 +531,8 @@ export function buildExtractionPrompt({ existing, transcript, sessionNote }) {
   }
   cfgLines.push('本轮新增对话（只从这里抽取新信息；已有记忆只是参照）：')
   cfgLines.push(transcript)
+  cfgLines.push('')
+  cfgLines.push(`数量限制：本轮最多输出 ${limit} 条记忆（"create" 计入上限，"update" 不计入）；信息太多时只保留最重要的。`)
   cfgLines.push('')
   cfgLines.push('请输出 JSON：')
   return cfgLines.join('\n')

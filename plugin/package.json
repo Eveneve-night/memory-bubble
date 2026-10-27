@@ -1,6 +1,6 @@
 {
   "name": "dsh-memory-bubble",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "忆泡 Memory Bubble — 把 AI 日常对话沉淀成可管理、可继承的暖色记忆泡泡图",

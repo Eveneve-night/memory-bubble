@@ -28,9 +28,11 @@ plugin/
 | 左侧栏 | 「忆泡」图标（`sidebar.panellist`） | 打开整幅记忆图 |
 | 主面板 | 泡泡图（`main`，key=`memory-bubble`） | 暖色泡泡、三档语义缩放、点泡看详情、改重要性滑杆、编辑/删除、冲突连线、搜索、撤销上一批、导出/导入 |
 | 输入框左侧 | 「忆泡」药丸（`conversation.input.left`） | 当前会话记忆数，点开主面板 |
-| 设置页 | 「忆泡」分区（`settings.section`） | 自动总结开关、去抖/最小间隔、注入方式、摘要条数、导出/导入 |
+| 设置页 | 「忆泡」分区（`settings.section`） | **读取对话并自动生成** 总开关、每轮最多生成条数、记忆总量上限、去抖/最小间隔、注入方式、导出/导入 |
 | 对话注入 | `systemPrompt.section` + `agent/pre-step` 兜底 | 每轮把稳定简报注入上下文；深度模式可写在 system prompt 里提高缓存命中 |
 | 工具 | `memory_search` / `memory_brief` / `memory_remember` / `memory_link` / `memory_forget` | 让 AI 自己查记忆、主动记一条、连线、删除 |
+
+「＋ 手动记一条」按钮只用于手动新增/编辑记忆，与自动生成互不影响；自动生成完全由设置里的开关控制（每个会话还能在托盘里单独暂停）。
 
 交互要点：滚轮缩放（三档信息层级）、拖动平移、双击自适应、点泡泡看卡片、Shift+点泡泡放进本轮托盘（「注入本对话」）、点连线看关系并「重新校验冲突」、Esc 关闭卡片。
 
@@ -79,19 +81,35 @@ GET  /memory-bubble/api/ai/prompt         // 便携提示词纯文本
 - 工具清单 `TOOL_MANIFEST`：5 个工具的 JSON-Schema，可直接转成 function calling / MCP 工具。
 - 记忆包 schema：`schema/memory-bubble-bundle-v1.schema.json`（图沿用 `memory-bubble/v1`）。
 
+## 自动生成怎么控制（设置页「忆泡」分区）
+
+| 设置项 | 字段 | 默认 | 说明 |
+|---|---|---|---|
+| 读取对话并自动生成记忆 | `auto` | 开 | 总开关；关闭后不再自动读取/抽取（手动「立即总结」仍可用） |
+| 每轮最多生成 | `maxPerExtraction` | 3 | 1–5，本轮新建记忆点上限（更新已有记忆不受限） |
+| 记忆总量上限 | `maxTotalNodes` | 300 | 20–2000，达到后只更新不再新建 |
+| 总结去抖 | `debounceMs` | 15000 | 回合结束后等多久再总结 |
+| 同会话最小间隔 | `minIntervalMs` | 90000 | 避免连续回合重复抽取 |
+| 抽取窗口 | `maxTranscriptChars` | 6000 | 发给模型的最近对话字符数 |
+| 注入方式 | `injection` | `digest` | `digest` 简报 / `tray` 托盘 / `off` 不注入 |
+| 摘要条数 | `digestLimit` | 12 | 简报最多列几条 |
+
+- 手动入口只有「＋ 手动记一条」和「立即总结」：前者只写一条（可编辑/删除），后者是显式触发一次自动抽取。
+- 每个会话可在托盘里单独勾选「自动读取对话」，优先级高于全局开关。
+
 ## 自动总结的时序
 
 1. `session/event` 折叠本会话的 `user/message`（只认 `source.kind === 'user'`，跳过运行时上下文/技能/忆泡简报自身）与 `assistant/message`。
 2. `turn/end` 触发去抖（默认 15s，同一会话至少间隔 90s），`ctx.effect` 管理定时器。
-3. 调 `llm.stream`（默认模型 + 最近对话 + 「已有记忆标题」避免重复），解析 JSON 抽取结果。
-4. 合并进图谱：近似标题/关键词判重、追加时效、更新频率；整批写入可撤销（`rollback`）。
+3. 调 `llm.stream`（默认模型 + 最近对话 + 「已有记忆标题」避免重复），解析 JSON 抽取结果；提示词里明确「本轮最多 N 条」。
+4. 合并进图谱：近似标题/关键词判重、追加时效、更新频率；**每轮新建数量受 `maxPerExtraction` 限制（默认 3，可调 1–5），总量受 `maxTotalNodes` 限制（默认 300）**，超出部分记入 `batch.skipped`；整批写入可撤销（`rollback`）。
 5. 重算布局与稳定简报；客户端下一次打开/轮询即看到新泡泡。
 
 ## 装进 DSH（后续单独对话验证）
 
 三条路，任选其一：
 
-1. **本地 file: 安装（推荐先试）**：在 profile 下执行 `pnpm add "file:<repo>/plugin"`，然后在 `cordis.yml` 的 loader 里加一行 `memory-bubble`（或让 `plugin_manager` 安装），刷新 Web GUI。
+1. **本地 file: 安装（推荐先试）**：在 profile 下执行 `pnpm add "file:D:\Deepseek Harness\memory-bubble\plugin"`，然后在 `cordis.yml` 的 loader 里加一行 `memory-bubble`（或让 `plugin_manager` 安装），刷新 Web GUI。
 2. **复制进 node_modules**：把 `plugin/` 复制为 `<profile>/node_modules/dsh-memory-bubble`，在 `cordis.yml` 的 loader 列表插入 `{ id: memory-bubble, name: dsh-memory-bubble }`，刷新页面。
 3. **发布 npm 后**用 `plugin_manager install_bundle` 正式安装（bundle 自带 `cordis.patch.yml`，无需手改 loader）。
 
@@ -101,7 +119,7 @@ GET  /memory-bubble/api/ai/prompt         // 便携提示词纯文本
 
 ```
 cd plugin
-node dev/test-core.mjs     # 12 项：合并/去重/布局/简报/撤销/导入导出/解析健壮性
+node dev/test-core.mjs     # 15 项：合并/去重/布局/简报/撤销/导入导出/解析健壮性/生成数量与总量上限
 node dev/test-host.mjs     # 13 项：apply 注册、事件折叠、去抖、总结、编辑、托盘、工具、注入、持久化、互操作
 node dev/test-client.mjs   # 客户端模块加载、四个 slot、渲染冒烟
 node --check lib/client.js # 客户端单文件语法
@@ -109,7 +127,7 @@ node --check lib/client.js # 客户端单文件语法
 
 互操作层单独测（仓库根目录）：`node interop/dev/test-interop.mjs`（5 项：CLI / bundle schema / MCP 全套）。
 
-当前结果：core 12/12、host 13/13、client 3/3、interop 5/5、`node --check` 通过。
+当前结果：core 15/15、host 13/13、client 3/3、interop 5/5、`node --check` 通过。
 
 ## 已知未验证点（真机待确认）
 

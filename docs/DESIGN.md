@@ -413,7 +413,9 @@ window.__ModuleLoader__.load({ id: 'dsh-memory-bubble', factory: (require) => {
 | 存储 | `plugin/lib/store.js` | `<profile>/.memory-bubble/state.json`，临时文件 + `.bak` 原子替换，导出目录 |
 | 客户端 | `plugin/lib/client.js` | 单文件无构建，注册 `sidebar.panellist` / `main` / `conversation.input.left` / `settings.section`；三档缩放、拖动平移、详情卡、滑杆改重要性、编辑/删除、冲突连线与重新校验、搜索、托盘、撤销、导入导出、深浅色 |
 
-自检结果：core 12/12、host 13/13（伪造 ctx + 真实 HTTP 流程，含互操作路由）、client 冒烟 3/3、interop 5/5、`node --check` 四文件通过。
+**配置（v0.2.1 增补）**：设置页四项控制自动生成——「读取对话并自动生成记忆」总开关、每轮最多生成条数（`maxPerExtraction`，默认 3，范围 1–5）、记忆总量上限（`maxTotalNodes`，默认 300，范围 20–2000）、总结去抖与最小间隔；注入方式与摘要条数仍在同一页。「＋ 手动记一条」按钮只负责手动新增/编辑，不触发自动抽取；每个会话还能在托盘里单独暂停自动读取。
+
+自检结果：core 15/15（新增生成数量/总量上限用例）、host 13/13（伪造 ctx + 真实 HTTP 流程，含互操作路由与配置钳制）、client 冒烟 3/3、interop 5/5、`node --check` 四文件通过。
 真机未验证项与安装三选一写在 `plugin/README.md`。
 
 ## 13. 跨 AI 互操作层（v0.2）
@@ -458,7 +460,7 @@ window.__ModuleLoader__.load({ id: 'dsh-memory-bubble', factory: (require) => {
 
 | 先例 | 看什么 |
 |---|---|
-| `$DSH_PROFILE\node_modules\misakanet\lib\client.js:1834-1937` | `sidebar.panellist` + `main` 同 id 注册、slot 声明守卫、失败隔离 |
-| `<DSH 安装目录>/plugin-console\lib\index.js` + `lib\client.js` | host 路由 + 单文件 client + profile 目录读写的最小形态 |
-| `$DSH_PROFILE\node_modules\dsh-hindsight\README.md` | 记忆类插件的工具/命令/系统提示词注入形态（可直接借鉴） |
+| `C:\Users\COLORFUL\.dsh\profiles\desktop\node_modules\misakanet\lib\client.js:1834-1937` | `sidebar.panellist` + `main` 同 id 注册、slot 声明守卫、失败隔离 |
+| `D:\Deepseek Harness\plugin-console\lib\index.js` + `lib\client.js` | host 路由 + 单文件 client + profile 目录读写的最小形态 |
+| `C:\Users\COLORFUL\.dsh\profiles\desktop\node_modules\dsh-hindsight\README.md` | 记忆类插件的工具/命令/系统提示词注入形态（可直接借鉴） |
 | `billion-context` 的 `dsh.bundle.patch.yml` | 插件如何 patch profile 的 loader 行（以后若需改 compaction/preset） |

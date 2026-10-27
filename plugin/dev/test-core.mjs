@@ -18,6 +18,7 @@ import {
   rollbackBatch,
   parseExtraction,
   formatTranscript,
+  buildExtractionPrompt,
   exportGraph,
   importGraph,
   defaultConfig,
@@ -220,6 +221,45 @@ await check('配置默认值可覆盖', () => {
   const state = emptyState({ debounceMs: 5000 })
   assert.equal(state.config.debounceMs, 5000)
   assert.equal(state.config.injection, defaultConfig().injection)
+})
+
+await check('配置：生成数量与总量上限', () => {
+  const state = emptyState()
+  assert.equal(state.config.maxPerExtraction, 3)
+  assert.equal(state.config.maxTotalNodes, 300)
+  const extracted = buildExtractionPrompt({ existing: [], transcript: '用户：hi', maxNew: 2 })
+  assert.ok(extracted.includes('最多输出 2 条记忆'), extracted)
+})
+
+await check('合并：每轮新建数量受 maxPerExtraction 限制', () => {
+  const state = emptyState({ maxPerExtraction: 2 })
+  const extraction = normalizeExtraction({
+    memories: [
+      { title: 'A', summary: 'a' },
+      { title: 'B', summary: 'b' },
+      { title: 'C', summary: 'c' },
+      { title: 'D', summary: 'd' },
+    ],
+  })
+  const batch = mergeExtraction(state, SID, extraction)
+  assert.equal(batch.created.length, 2)
+  assert.equal(Object.values(state.nodes).length, 2)
+  assert.equal(batch.skipped, 2)
+})
+
+await check('合并：达到总量上限后只更新不新增', () => {
+  const state = emptyState({ maxTotalNodes: 20 })
+  const stamp = '2026-01-01T00:00:00.000Z'
+  for (let i = 0; i < 20; i += 1) {
+    state.nodes[`x${i}`] = {
+      id: `x${i}`, title: `填充${i}`, summary: '', keywords: [], kind: '事实', importance: 10,
+      hits: 1, created: stamp, updated: stamp, sessions: [SID], pinned: false,
+    }
+  }
+  const batch = mergeExtraction(state, SID, normalizeExtraction({ memories: [{ title: '新记忆', summary: 'y' }] }))
+  assert.equal(batch.created.length, 0)
+  assert.equal(batch.skipped, 1)
+  assert.equal(Object.keys(state.nodes).length, 20)
 })
 
 console.log(`\n${passed} checks passed`)

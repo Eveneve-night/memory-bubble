@@ -23,7 +23,7 @@
 
 ### 2. 在 DeepSeek Harness 里使用（插件）
 
-**先下载**：[插件包 v0.2.0](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.2.0/dsh-memory-bubble-v0.2.0.zip)（解压即得 `dsh-memory-bubble/` 目录）
+**先下载**：[插件包 v0.2.1](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.2.1/dsh-memory-bubble-v0.2.1.zip)（解压即得 `dsh-memory-bubble/` 目录）
 
 #### 方式 A：本地安装（当前版本）
 
@@ -53,13 +53,13 @@ pnpm add "file:<path-to-clone>/plugin"
 
 > npm 包发布后会补上 `plugin_manager install_bundle` 的一行安装方式（bundle 自带 `cordis.patch.yml`，不需要手改 loader）。
 
-安装后的入口：**左栏「忆泡」图标**（整幅记忆图）、**输入框左侧药丸**（当前会话记忆数）、**设置页「忆泡」分区**（自动总结开关、去抖间隔、注入方式、导入导出）。
+安装后的入口：**左栏「忆泡」图标**（整幅记忆图）、**输入框左侧药丸**（当前会话记忆数）、**设置页「忆泡」分区**（读取对话并自动生成开关、每轮最多生成条数、记忆总量上限、去抖间隔、注入方式、导入导出）。
 
 ### 3. 其他 AI 也要用？走互操作层（v0.2）
 
 忆泡的记忆不是 DSH 专属。同一份 `state.json` 有四条通道可以给别的 AI 用，详见 **[INTEROP.md](INTEROP.md)**：
 
-**先下载**：[互操作包 v0.2.0](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.2.0/memory-bubble-interop-v0.2.0.zip)（MCP 服务器 + CLI + schema + 使用说明，解压后直接 `node interop/cli.mjs --help`）
+**先下载**：[互操作包 v0.2.1](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.2.1/memory-bubble-interop-v0.2.1.zip)（MCP 服务器 + CLI + schema + 使用说明，解压后直接 `node interop/cli.mjs --help`）
 
 ```bash
 # 打包一份记忆包（图 + 简报 + 便携提示词 + 工具清单）
@@ -108,8 +108,9 @@ assets/    README 截图
 
 ## 现状与路线
 
-- ✅ v0.1：宿主半 + 客户端半完成，本地自检 core 12/12、host 13/13、client 3/3
+- ✅ v0.1：宿主半 + 客户端半完成，本地自检 core 15/15、host 13/13、client 3/3
 - ✅ v0.2：跨 AI 互操作层（MCP / CLI / HTTP / 记忆包），自检 interop 5/5；导出格式对齐 JSON Schema
+- ✅ v0.2.1：自动生成可控——读取对话总开关、每轮最多生成条数、记忆总量上限；「＋ 手动记一条」仅手动编辑
 - ⏳ 真机安装验证（下一个对话）：`llm.stream` 调用形状、`agent.ctx.systemPrompt` 可见性、主题 token 接入
 - 🔜 发布 npm 包（一行安装）→ 更多宿主适配（Web / 移动端）→ 记忆自动归档与「遗忘曲线」
 

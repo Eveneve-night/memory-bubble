@@ -621,14 +621,15 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
           h('div', { className: 'bubble' }),
           h('div', null, '这里还没有记忆泡泡'),
           h('div', { style: { fontSize: 12, opacity: 0.75, textAlign: 'center', maxWidth: 340, lineHeight: 1.7 } },
-            '正常聊几轮后会自动提炼记忆点；现在也可以点右上角「立即总结」或「新增记忆」手动种下第一个泡泡。')),
+            '在设置里打开「读取对话并自动生成记忆」，聊几轮就会自动长出泡泡；也可以点「＋ 手动记一条」自己种下第一颗。')),
         h('div', { className: 'mb-legend' }, h('span', null, '大 = 重要'), h('span', { style: { opacity: 0.5 } }, '·'), h('span', null, '中心 = 高频'), h('span', { style: { opacity: 0.5 } }, '·'), h('b', null, tier.label)),
         h('div', { className: 'mb-zoom-pill' }, `${Math.round(scale * 100)}% · 滚轮缩放 · 拖拽平移 · 双击适应`),
         h('button', {
           className: 'mb-btn primary',
+          title: '手动新增/编辑一条记忆；自动生成由设置里的开关控制，不会走这个按钮',
           style: { position: 'absolute', right: 18, top: 18, boxShadow: '0 10px 26px rgba(244,113,77,.3)' },
           onClick: () => setSelected({ type: 'node', id: '__new__' }),
-        }, '＋ 新增记忆'))
+        }, '＋ 手动记一条'))
 
       const tray = h('div', { className: 'mb-tray' },
         h('div', { className: 'mb-tray-label' },
@@ -639,14 +640,14 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
             ? trayNodes.map((node) => h(Chip, { key: node.id, node, onRemove: () => removeFromTray(node.id) }))
             : h('span', { style: { fontSize: 11.5, color: 'var(--mb-ink-soft)', opacity: 0.7 } }, '托盘里的记忆会被钉在本轮简报最上面；不选则按重要度自动取前几条。')),
         sessionId
-          ? h('label', { className: 'mb-tray-label', title: '关闭后不会再自动总结这个会话' },
+          ? h('label', { className: 'mb-tray-label', title: '关闭后这个会话不再自动读取对话；仍可手动点「立即总结」' },
             h(Switch, { on: session.enabled !== false, onClick: async () => {
               try {
                 await api('/session', { method: 'POST', body: JSON.stringify({ sessionId, enabled: session.enabled === false }) })
                 await load({ silent: true, sessionId })
-                toast(session.enabled === false ? '已重新开启自动总结' : '已暂停自动总结，随时可手动总结')
+                toast(session.enabled === false ? '本会话已恢复自动生成' : '本会话已暂停自动生成')
               } catch (err) { toast(String(err.message || err)) }
-            } }), '自动总结')
+            } }), '本会话自动生成')
           : null,
         h('button', { className: 'mb-btn ghost', disabled: !sessionId, onClick: () => { setDigestOpen(true) } }, '预览简报'),
         h('div', { style: { fontSize: 11, color: 'var(--mb-ink-soft)', whiteSpace: 'nowrap' } },
@@ -822,6 +823,8 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
 
     function ConfigForm({ config, onSaved, toast }) {
       const [auto, setAuto] = useState(config.auto !== false)
+      const [maxNew, setMaxNew] = useState(config.maxPerExtraction || 3)
+      const [maxTotal, setMaxTotal] = useState(config.maxTotalNodes || 300)
       const [debounce, setDebounce] = useState(Math.round((config.debounceMs || 15000) / 1000))
       const [minInterval, setMinInterval] = useState(Math.round((config.minIntervalMs || 90000) / 1000))
       const [maxChars, setMaxChars] = useState(config.maxTranscriptChars || 6000)
@@ -831,14 +834,17 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
       const save = async () => {
         setSaving(true)
         try {
-          const result = await api('/config', { method: 'POST', body: JSON.stringify({ config: { auto, debounceMs: debounce * 1000, minIntervalMs: minInterval * 1000, maxTranscriptChars: maxChars, injection } }) })
+          const result = await api('/config', { method: 'POST', body: JSON.stringify({ config: { auto, maxPerExtraction: maxNew, maxTotalNodes: maxTotal, debounceMs: debounce * 1000, minIntervalMs: minInterval * 1000, maxTranscriptChars: maxChars, injection } }) })
           onSaved(result.config)
         } catch (err) { toast(String(err.message || err)) } finally { setSaving(false) }
       }
 
       return h('div', null,
         h('div', { style: { fontSize: 13, fontWeight: 600, marginBottom: 4 } }, '忆泡设置'),
-        h('label', null, h('span', null, '自动总结'), h(Switch, { on: auto, onClick: () => setAuto(!auto) })),
+        h('label', null, h('span', null, '读取对话并自动生成记忆'), h(Switch, { on: auto, onClick: () => setAuto(!auto) })),
+        h('div', { className: 'hint', style: { marginTop: -2 } }, '关闭后忆泡不再读新对话；已有记忆、简报和手动记录仍然可用。每个会话在托盘里还能单独暂停。'),
+        h('label', null, h('span', null, '每轮最多生成（条）'), h('input', { type: 'number', min: 1, max: 5, step: 1, value: maxNew, onChange: (event) => setMaxNew(Number(event.target.value) || 3) })),
+        h('label', null, h('span', null, '记忆总量上限（条）'), h('input', { type: 'number', min: 20, max: 2000, step: 10, value: maxTotal, onChange: (event) => setMaxTotal(Number(event.target.value) || 300) })),
         h('label', null, h('span', null, '停手后等待（秒）'), h('input', { type: 'number', min: 1, max: 300, value: debounce, onChange: (event) => setDebounce(Number(event.target.value) || 1) })),
         h('label', null, h('span', null, '两次总结最小间隔（秒）'), h('input', { type: 'number', min: 5, max: 3600, value: minInterval, onChange: (event) => setMinInterval(Number(event.target.value) || 5) })),
         h('label', null, h('span', null, '转录长度上限（字符）'), h('input', { type: 'number', min: 500, max: 30000, value: maxChars, onChange: (event) => setMaxChars(Number(event.target.value) || 6000) })),

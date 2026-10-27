@@ -285,10 +285,15 @@ await check('每步注入：pre-step 追加忆泡简报（会话隔离）', asyn
 })
 
 await check('配置：关闭自动总结后状态持久化', async () => {
-  const saved = await call('/memory-bubble/api/config', { method: 'POST', body: { config: { auto: false, debounceMs: 4000, injection: 'tray' } } })
+  const saved = await call('/memory-bubble/api/config', { method: 'POST', body: { config: { auto: false, debounceMs: 4000, injection: 'tray', maxPerExtraction: 2, maxTotalNodes: 120 } } })
   assert.equal(saved.body.config.auto, false)
   assert.equal(saved.body.config.debounceMs, 4000)
   assert.equal(saved.body.config.injection, 'tray')
+  assert.equal(saved.body.config.maxPerExtraction, 2)
+  assert.equal(saved.body.config.maxTotalNodes, 120)
+  const clamped = await call('/memory-bubble/api/config', { method: 'POST', body: { config: { maxPerExtraction: 9, maxTotalNodes: 99999 } } })
+  assert.equal(clamped.body.config.maxPerExtraction, 5)
+  assert.equal(clamped.body.config.maxTotalNodes, 2000)
   const graph = await call(`/memory-bubble/api/graph?sessionId=${SESSION}&scope=all`)
   assert.equal(graph.body.config.injection, 'tray')
 })
