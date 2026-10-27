@@ -59,6 +59,8 @@ pnpm add "file:<path-to-clone>/plugin"
 
 忆泡的记忆不是 DSH 专属。同一份 `state.json` 有四条通道可以给别的 AI 用，详见 **[INTEROP.md](INTEROP.md)**：
 
+**先下载**：[互操作包 v0.2.0](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.2.0/memory-bubble-interop-v0.2.0.zip)（MCP 服务器 + CLI + schema + 使用说明，解压后直接 `node interop/cli.mjs --help`）
+
 ```bash
 # 打包一份记忆包（图 + 简报 + 便携提示词 + 工具清单）
 node interop/cli.mjs bundle --out bundle.json
