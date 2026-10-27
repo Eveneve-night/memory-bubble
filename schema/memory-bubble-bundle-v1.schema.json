@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memory-bubble.local/schema/memory-bubble-bundle-v1.schema.json",
+  "title": "Memory Bubble bundle v1",
+  "description": "跨 AI 记忆包：图 + 简报 + 便携提示词 + 工具清单。其他 AI 下载后即可继承这份记忆；也可用作 DSH 插件状态迁移 / 备份载体。",
+  "type": "object",
+  "required": ["schema", "schemaVersion", "graph", "prompt", "tools"],
+  "additionalProperties": true,
+  "properties": {
+    "schema": { "const": "memory-bubble-bundle" },
+    "schemaVersion": { "type": "integer", "minimum": 1 },
+    "app": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "name": { "const": "dsh-memory-bubble" },
+        "stateVersion": { "type": "integer" }
+      }
+    },
+    "exportedAt": { "type": "string", "format": "date-time" },
+    "sessionId": { "type": ["string", "null"] },
+    "sessionTitle": { "type": ["string", "null"] },
+    "digest": {
+      "type": "string",
+      "description": "稳定记忆简报，可直接贴进 system prompt",
+      "maxLength": 8000
+    },
+    "prompt": {
+      "type": "string",
+      "minLength": 10,
+      "description": "跨 AI 便携使用说明（忆泡规则）"
+    },
+    "sourceFormat": { "const": "memory-bubble/v1" },
+    "tools": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "description", "parameters"],
+        "additionalProperties": true,
+        "properties": {
+          "name": { "type": "string", "pattern": "^memory_[a-z_]+$" },
+          "description": { "type": "string" },
+          "parameters": { "type": "object", "additionalProperties": true }
+        }
+      }
+    },
+    "graph": {
+      "type": "object",
+      "required": ["id", "nodes", "edges"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string" },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" } },
+        "edges": { "type": "array", "items": { "$ref": "#/$defs/edge" } }
+      }
+    }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "required": ["id", "title"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "summary": { "type": "string", "maxLength": 600 },
+        "keywords": { "type": "array", "maxItems": 12, "items": { "type": "string", "maxLength": 24 } },
+        "importance": { "type": "number", "minimum": 0, "maximum": 100 },
+        "hits": { "type": "integer", "minimum": 1 },
+        "kind": { "type": "string" },
+        "tone": { "type": "string" },
+        "created": { "type": "string" },
+        "updated": { "type": "string" },
+        "sessions": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["id", "from", "to"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string" },
+        "from": { "type": "string" },
+        "to": { "type": "string" },
+        "summary": { "type": "string", "maxLength": 600 },
+        "relation": { "type": "string" },
+        "conflict": { "type": "boolean" },
+        "created": { "type": "string" },
+        "updated": { "type": "string" }
+      }
+    }
+  }
+}

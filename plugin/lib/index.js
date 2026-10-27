@@ -37,8 +37,12 @@ import {
   sanitizeKeywords,
   sanitizeKind,
   formatDate,
+  buildBundle,
+  searchNodes,
+  PORTABLE_PROMPT,
+  TOOL_MANIFEST,
 } from './core.js'
-import { resolveProfileDir, readState, writeState, writeExport } from './store.js'
+import { resolveProfileDir, readState, writeState, writeExport, statePath } from './store.js'
 
 export const name = 'memory-bubble'
 export const inject = ['webServer']
@@ -418,6 +422,52 @@ export function apply(ctx) {
     html(res).send(200, { ok: true, name, version: 1, profileDir, stats: stats() })
   })
 
+  /* ---- 跨 AI 互操作：其他 AI 可下载 bundle、读取 manifest、按同一份 schema 继承记忆 ---- */
+
+  route('/interop', async (req, res) => {
+    await ready
+    return html(res).send(200, {
+      ok: true,
+      schema: 'memory-bubble-interop',
+      schemaVersion: 1,
+      app: {
+        name,
+        routes: {
+          bundle: `${ROUTE_BASE}/ai/bundle`,
+          prompt: `${ROUTE_BASE}/ai/prompt`,
+          graph: `${ROUTE_BASE}/graph`,
+          import: `${ROUTE_BASE}/import`,
+          export: `${ROUTE_BASE}/export`,
+        },
+      },
+      data: { profileDir, stateFile: profileDir ? statePath(profileDir) : null, dataFile: statePath(profileDir) },
+      bundleFormat: 'memory-bubble-bundle v1',
+      prompt: PORTABLE_PROMPT,
+      tools: TOOL_MANIFEST,
+      clients: [
+        { name: 'MCP', transport: 'stdio', entry: 'interop/mcp-server.mjs', args: ['--data', statePath(profileDir)] },
+        { name: 'CLI', transport: 'process', entry: 'interop/cli.mjs', args: ['list', '--data', statePath(profileDir)] },
+        { name: 'HTTP', transport: 'http', entry: `${ROUTE_BASE}/ai/bundle`, args: ['?sessionId=<id>'] },
+        { name: 'DSH plugin', transport: 'in-process', entry: '自动注入 system prompt / 工具' },
+      ],
+    })
+  })
+
+  route('/ai/bundle', async (req, res) => {
+    await ready
+    const url = new URL(req.url || '/', 'http://dsh.local')
+    const sessionId = url.searchParams.get('sessionId') || undefined
+    decorate(state, sessionId)
+    return html(res).send(200, { ok: true, ...buildBundle(state, sessionId) })
+  })
+
+  route('/ai/prompt', async (req, res) => {
+    await ready
+    res.statusCode = 200
+    res.setHeader('content-type', 'text/plain; charset=utf-8')
+    res.end(`${PORTABLE_PROMPT}\n`)
+  })
+
   route('/graph', async (req, res) => {
     await ready
     const url = new URL(req.url || '/', 'http://dsh.local')
@@ -624,9 +674,10 @@ export function apply(ctx) {
   route('/import', async (req, res) => {
     await ready
     const body = await readJson(req)
-    const graph = body && (body.graph || body)
-    if (!graph || !Array.isArray(graph.nodes)) return html(res).send(400, { ok: false, error: 'invalid graph' })
-    const report = importGraph(state, graph)
+    const payload = body && (body.graph || body)
+    const inner = payload && payload.graph ? payload.graph : payload
+    if (!inner || !Array.isArray(inner.nodes)) return html(res).send(400, { ok: false, error: 'invalid graph' })
+    const report = importGraph(state, payload)
     await persist()
     return html(res).send(200, { ok: true, report })
   })

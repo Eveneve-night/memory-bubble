@@ -1,7 +1,8 @@
-# 忆泡 · DSH 插件（dsh-memory-bubble）v0.1
+# 忆泡 · DSH 插件（dsh-memory-bubble）v0.2
 
 把 AI 与你的日常对话，沉淀成一张可管理、可继承的暖色记忆泡泡图。
 宿主半负责「抽取 / 存储 / 简报 / 注入」，客户端半负责「可视化 / 编辑 / 托盘」。
+v0.2 起新增**跨 AI 互操作层**（MCP / CLI / HTTP / 记忆包），代码在仓库根目录 `interop/`。
 
 ## 目录
 
@@ -58,7 +59,25 @@ POST /memory-bubble/api/session           { sessionId, enabled }
 POST /memory-bubble/api/export
 POST /memory-bubble/api/import            { graph }
 GET  /memory-bubble/api/batch?sessionId=
+GET  /memory-bubble/api/interop           // 跨 AI 能力清单（数据路径/工具/提示词/通道）
+GET  /memory-bubble/api/ai/bundle?sessionId=  // memory-bubble-bundle（图+简报+提示词+工具）
+GET  /memory-bubble/api/ai/prompt         // 便携提示词纯文本
 ```
+
+## 跨 AI 互操作（v0.2）
+
+同一份 `state.json` 可被四种通道读取，详见根目录 [INTEROP.md](../INTEROP.md)：
+
+| 通道 | 入口 | 适合谁 |
+| --- | --- | --- |
+| MCP | `interop/mcp-server.mjs`（stdio） | Claude Desktop / Cursor / 其他 MCP 客户端 |
+| CLI | `interop/cli.mjs list/search/brief/export/bundle/import/remember/forget` | 脚本、其他 AI 的 shell 工具 |
+| HTTP | `/memory-bubble/api/interop`、`/ai/bundle`、`/ai/prompt` | 本机其他进程、局域网工具 |
+| 记忆包 | `bundle.json`（`memory-bubble-bundle v1`） | 换 AI / 换机器 / 换对话的继承 |
+
+- 便携提示词 `PORTABLE_PROMPT`：把「忆泡规则」贴进任何 AI 的 system prompt 即可用。
+- 工具清单 `TOOL_MANIFEST`：5 个工具的 JSON-Schema，可直接转成 function calling / MCP 工具。
+- 记忆包 schema：`schema/memory-bubble-bundle-v1.schema.json`（图沿用 `memory-bubble/v1`）。
 
 ## 自动总结的时序
 
@@ -83,12 +102,14 @@ GET  /memory-bubble/api/batch?sessionId=
 ```
 cd plugin
 node dev/test-core.mjs     # 12 项：合并/去重/布局/简报/撤销/导入导出/解析健壮性
-node dev/test-host.mjs     # 12 项：apply 注册、事件折叠、去抖、总结、编辑、托盘、工具、注入、持久化
+node dev/test-host.mjs     # 13 项：apply 注册、事件折叠、去抖、总结、编辑、托盘、工具、注入、持久化、互操作
 node dev/test-client.mjs   # 客户端模块加载、四个 slot、渲染冒烟
 node --check lib/client.js # 客户端单文件语法
 ```
 
-当前结果：core 12/12、host 12/12、client 3/3、`node --check` 通过。
+互操作层单独测（仓库根目录）：`node interop/dev/test-interop.mjs`（5 项：CLI / bundle schema / MCP 全套）。
+
+当前结果：core 12/12、host 13/13、client 3/3、interop 5/5、`node --check` 通过。
 
 ## 已知未验证点（真机待确认）
 
@@ -96,3 +117,4 @@ node --check lib/client.js # 客户端单文件语法
 - `agent.ctx.systemPrompt.section` 是否在运行时可见（已做特性探测，失败则只走 `agent/pre-step` 追加注入）。
 - 深色模式目前用 `html[data-mb-theme]` + `prefers-color-scheme` 双兜底，接入 DSH 主题服务后可视需要切换为 `--dsw-alias-*`。
 - 安装路径三选一需在真机确认，`file:` spec 是否被 `plugin_manager` 接受尚未实测。
+- MCP 客户端（Claude Desktop / Cursor）的真实握手只做过协议级自测（`interop/dev/test-interop.mjs`），未在具体客户端里跑过。

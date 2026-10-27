@@ -413,8 +413,46 @@ window.__ModuleLoader__.load({ id: 'dsh-memory-bubble', factory: (require) => {
 | 存储 | `plugin/lib/store.js` | `<profile>/.memory-bubble/state.json`，临时文件 + `.bak` 原子替换，导出目录 |
 | 客户端 | `plugin/lib/client.js` | 单文件无构建，注册 `sidebar.panellist` / `main` / `conversation.input.left` / `settings.section`；三档缩放、拖动平移、详情卡、滑杆改重要性、编辑/删除、冲突连线与重新校验、搜索、托盘、撤销、导入导出、深浅色 |
 
-自检结果：core 12/12、host 12/12（伪造 ctx + 真实 HTTP 流程）、client 冒烟 3/3、`node --check` 四文件通过。
+自检结果：core 12/12、host 13/13（伪造 ctx + 真实 HTTP 流程，含互操作路由）、client 冒烟 3/3、interop 5/5、`node --check` 四文件通过。
 真机未验证项与安装三选一写在 `plugin/README.md`。
+
+## 13. 跨 AI 互操作层（v0.2）
+
+需求（用户原话）：“保留接口，让其他 ai 也能下载并使用。”
+目标：忆泡不是 DSH 专属。同一份 `state.json`，别的 AI / 宿主 / 脚本都能读；记忆可以跨 AI、跨对话、跨机器继承。
+
+### 13.1 四条通道（全部零第三方依赖）
+
+| 通道 | 实现 | 给谁用 | 协议 / 入口 |
+|---|---|---|---|
+| MCP stdio | `interop/mcp-server.mjs` | Claude Desktop、Cursor、任何 MCP 客户端 | JSON-RPC 2.0（2024-11-05）：5 tools、3 resources、1 prompt；`initialize.instructions` 自带便携提示词；`--read-only` 可禁用写入 |
+| CLI | `interop/cli.mjs` | 脚本、其他 AI 的 shell 工具 | `list / search / brief / export / import / bundle / remember / forget`；`--data` 指定任意 state.json |
+| HTTP | 插件路由 `/memory-bubble/api/interop`、`/ai/bundle`、`/ai/prompt` | 本机进程、局域网工具（DSH 运行中） | 与插件共用 webServer，不开新端口 |
+| 记忆包文件 | `bundle.json` | 换 AI / 换机器 / 换对话 | `memory-bubble-bundle v1`：`graph` + `digest` + `prompt` + `tools` |
+
+### 13.2 格式契约（唯一真相 = schema/）
+
+- `memory-bubble/v1`：图导出格式。`{ schema, version, exportedAt, source, graph: { id, nodes, edges } }`，节点带 `importance / hits / kind / keywords / sessions`。
+- `memory-bubble-bundle v1`：记忆包。`graph` 内联，`prompt` 是可直接贴进 system prompt 的中文规则，`tools` 是 5 个工具的 JSON-Schema（function calling / MCP 可直接转写）。
+- 导入兼容三种输入：v1 信封、旧版扁平 `{nodes,edges}`、bundle。判重沿用标题/关键词规则，`report` 返回新增/跳过数。
+- 记忆图与状态分离：`state.json` 是内部状态（含会话缓冲、批次、托盘），导出只带可继承部分；导入方不需要懂内部状态。
+
+### 13.3 安全与隐私
+
+- 全部本地、不联网；MCP 与 CLI 不订阅网络端口。
+- 默认只读优先：MCP `--read-only`；CLI 写命令需显式执行；HTTP 写接口仅在 DSH 本地端口可达。
+- 可审计：state.json 纯 JSON + `.bak`；插件支持整批撤销；导出/导入都在用户显式操作下发生。
+
+### 13.4 测试证据
+
+`interop/dev/test-interop.mjs` 5/5：CLI 写入/读取/导出/导入、bundle 结构、schema 可解析、MCP 握手 + tools/list + tools/call + resources/read；
+`plugin/dev/test-host.mjs` 13/13 覆盖 `/interop`、`/ai/bundle`、`/ai/prompt` 与导入去重；MCP 在具体客户端（Claude Desktop / Cursor）里的真实握手仍待真机验证。
+
+### 13.5 边界
+
+- 不绑定具体模型：bundle 里的记忆是数据，任何 AI 都能读；抽取仍由 DSH 内配置的默认模型完成。
+- 不做云同步：继承靠文件搬运（bundle.json / state.json），避免账号与隐私复杂度；想要同步可在上层加自己的同步工具。
+- 其他宿主接入只需实现 `memory-bubble/v1` 导入导出，即可与 DSH 插件互操作。
 
 ## 附：参考先例（本机已装，可直接读源码对照）
 

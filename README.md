@@ -5,7 +5,7 @@
 **忆泡**是一个面向「日常和 AI 聊天的人」的记忆工具：每轮对话结束后，插件用你的默认模型自动总结出一条条记忆点，画成一张暖色泡泡图。泡泡大小 = 重要性（可手动改），离中心远近 = 出现频率；AI 每轮会收到一条稳定简报，所以它**记得住你**，而你不必把整段历史重复喂给它。
 
 - 🫧 **看得见**：每个圆是一个记忆点，点开能改；连线是记忆之间的关系，冲突会亮红灯
-- 🧠 **带得走**：一键导出 JSON，换聊天窗口/换模型/换设备都能继承（其他 AI 也按同一份 schema 读取）
+- 🧠 **带得走**：一键导出 JSON / 记忆包，换聊天窗口、换模型、换设备都能继承；**其他 AI 也能直接下载使用（v0.2）**
 - ✂️ **可控上下文**：稳定简报进上下文，托盘按需钉选，避免「聊到后面 AI 忘了前面」
 - 🪟 **暖色、像在泡泡里**：奶油底、蜜桃气泡、三档语义缩放，深浅色跟随系统
 
@@ -23,7 +23,7 @@
 
 ### 2. 在 DeepSeek Harness 里使用（插件）
 
-**先下载**：[插件包 v0.1.0](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.1.0/dsh-memory-bubble-v0.1.0.zip)（解压即得 `dsh-memory-bubble/` 目录）
+**先下载**：[插件包 v0.2.0](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.2.0/dsh-memory-bubble-v0.2.0.zip)（解压即得 `dsh-memory-bubble/` 目录）
 
 #### 方式 A：本地安装（当前版本）
 
@@ -55,15 +55,22 @@ pnpm add "file:<path-to-clone>/plugin"
 
 安装后的入口：**左栏「忆泡」图标**（整幅记忆图）、**输入框左侧药丸**（当前会话记忆数）、**设置页「忆泡」分区**（自动总结开关、去抖间隔、注入方式、导入导出）。
 
-### 3. 开发 / 自测
+### 3. 其他 AI 也要用？走互操作层（v0.2）
+
+忆泡的记忆不是 DSH 专属。同一份 `state.json` 有四条通道可以给别的 AI 用，详见 **[INTEROP.md](INTEROP.md)**：
 
 ```bash
-cd plugin
-node dev/test-core.mjs     # 12 项纯逻辑测试
-node dev/test-host.mjs     # 12 项宿主集成测试（伪造 ctx + 真实 HTTP 全流程）
-node dev/test-client.mjs   # 客户端冒烟（伪造 ModuleLoader/react）
-node --check lib/client.js
+# 打包一份记忆包（图 + 简报 + 便携提示词 + 工具清单）
+node interop/cli.mjs bundle --out bundle.json
+
+# 或者起一个 MCP 服务器，交给 Claude Desktop / Cursor
+node interop/mcp-server.mjs --data "<profile>/.memory-bubble/state.json"
 ```
+
+- **MCP**：5 个工具（search / brief / remember / link / forget）、3 个资源、1 个提示词，`initialize` 自带跨 AI 使用说明
+- **CLI**：`list / search / brief / export / import / bundle / remember / forget`，零依赖
+- **HTTP**（DSH 运行中）：`/memory-bubble/api/ai/bundle`、`/ai/prompt`、`/interop`
+- **记忆包** `memory-bubble-bundle v1`：贴进别的 AI 的 system prompt 即可「继承」你的记忆
 
 ## 它在 AI 那边怎么工作
 
@@ -83,21 +90,24 @@ AI 也能主动调用 5 个工具：`memory_brief`（读简报）、`memory_sear
 - 全部保存在本机 `<profile>/.memory-bubble/state.json`（临时文件 + `.bak` 原子写；导出在 `exports/`）
 - 不联网、不遥测；「总结」走你已配置的默认模型（`llm.stream`）
 - 抽取只发送最近窗口（默认 6000 字符），不发送整段历史
-- 导出格式见 [`schema/memory-bubble-v1.schema.json`](schema/memory-bubble-v1.schema.json)，其他 AI/宿主可按此读写记忆
+- 导出格式见 [`schema/memory-bubble-v1.schema.json`](schema/memory-bubble-v1.schema.json)，记忆包见 [`schema/memory-bubble-bundle-v1.schema.json`](schema/memory-bubble-bundle-v1.schema.json)；其他 AI/宿主可按此读写记忆
+- 跨 AI 读取默认只读（MCP `--read-only`），写入需显式操作
 
 ## 目录
 
 ```
-docs/      设计与可行性文档（DESIGN §12 是实现状态；FEASIBILITY 为设计轮报告）
+docs/      设计与可行性文档（DESIGN §12 是实现状态、§13 是互操作层；FEASIBILITY 为设计轮报告）
 plugin/    DSH 插件：lib/{core,store,index,client}.js + dev/ 三套自测 + README
+interop/   跨 AI 互操作：mcp-server.mjs / cli.mjs / lib.mjs + 自测（INTEROP.md 是使用说明）
 prototype/ 离线可点原型（单文件）
-schema/    对外 import/export JSON Schema
+schema/    对外 import/export 与记忆包 JSON Schema
 assets/    README 截图
 ```
 
 ## 现状与路线
 
-- ✅ v0.1：宿主半 + 客户端半完成，本地自检 core 12/12、host 12/12、client 3/3
+- ✅ v0.1：宿主半 + 客户端半完成，本地自检 core 12/12、host 13/13、client 3/3
+- ✅ v0.2：跨 AI 互操作层（MCP / CLI / HTTP / 记忆包），自检 interop 5/5；导出格式对齐 JSON Schema
 - ⏳ 真机安装验证（下一个对话）：`llm.stream` 调用形状、`agent.ctx.systemPrompt` 可见性、主题 token 接入
 - 🔜 发布 npm 包（一行安装）→ 更多宿主适配（Web / 移动端）→ 记忆自动归档与「遗忘曲线」
 

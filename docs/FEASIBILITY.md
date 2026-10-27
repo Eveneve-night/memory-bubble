@@ -1,5 +1,3 @@
-> 说明（开源版）：本文件是设计轮的可行性报告，写作时实现尚未落地；文件名、路由与存储位置以 `plugin/` 中的实际代码和 `plugin/README.md` 为准（v0.1 实现状态见 `docs/DESIGN.md` §12）。
-
 # 忆泡 Memory Bubble · 可行性检验与证据
 
 > 配套 `DESIGN.md`。本文只回答一件事：**在 DSH 里，这些需求靠什么接缝实现，证据在哪，哪里还不确定。**
@@ -103,14 +101,14 @@
 | U4 | `session/event` 的 event 形状（消息内容在哪个字段、如何只取 user/assistant 文本） | 抽取取料 | 打一条日志 dump 一个 event |
 | U5 | `PromptSection.text` 的类型（string / string[]）与刷新时机 | 简报注入 | 抄 hindsight 的 `text: [...]` 用法，观察 system prompt |
 | U6 | 冷会话 zstd 解码（历史回填） | v1.1 功能 | 读一个 `session.v4.jsonl.zstd` 试 `zlib.zstdDecompress`（Node 版本相关） |
-| U7 | 插件安装/启用链路在 `approval=never` 下的行为 | 能否当场验证 | 需要你手动 `dsh plugin --profile desktop add "link:<repo>"` 或临时改审批策略 |
+| U7 | 插件安装/启用链路在 `approval=never` 下的行为 | 能否当场验证 | 需要你手动 `dsh plugin --profile desktop add "link:<path-to-repo>/memory-bubble"` 或临时改审批策略 |
 | U8 | 注入简报与 `billion-context` 压缩/缓存策略的相互影响 | 成本 | 观察开启简报前后的缓存命中（billion-context 有统计） |
 
 ---
 
 ## 5. 验证计划（安装后按序执行）
 
-1. **安装**（需授权）：profile `package.json` 加 `"dsh-memory-bubble": "link:<repo>"`，`dsh.profile.bundles` 加同名；重启 DSH。
+1. **安装**（需授权）：profile `package.json` 加 `"dsh-memory-bubble": "link:<path-to-repo>/plugin"`，`dsh.profile.bundles` 加同名；重启 DSH。
 2. **冒烟**：侧栏出现「忆泡」图标 → 点开主面板 → 空状态正常 → `/memory-bubble/api/status` 返回 200。
 3. **抽取**：对话 2 轮 → 点「总结这一段」→ 图新增节点 → 检查 `.memory-bubble/graph.json` 与 `journal.jsonl`。
 4. **注入**：点泡引用 → 托盘 → 「注入本轮对话」→ 下一轮问"你记得我什么" → 回答能引用；system prompt 调试里能看到"记忆简报"段。

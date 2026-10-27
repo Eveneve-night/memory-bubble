@@ -295,7 +295,8 @@ await check('配置：关闭自动总结后状态持久化', async () => {
 
 await check('导出 / 导入：同图合并去重', async () => {
   const exported = await call('/memory-bubble/api/export')
-  assert.ok(exported.body.graph.nodes.length >= 2)
+  assert.equal(exported.body.graph.schema, 'memory-bubble/v1')
+  assert.ok(exported.body.graph.graph.nodes.length >= 2)
   assert.ok(exported.body.file)
   const graph = await call(`/memory-bubble/api/graph?sessionId=${SESSION}&scope=all`)
   const before = graph.body.stats.nodes
@@ -306,6 +307,25 @@ await check('导出 / 导入：同图合并去重', async () => {
 })
 
 /** @type {() => Promise<void>} */
+await check('互操作：/interop 能力清单 + /ai/bundle 记忆包 + /ai/prompt 便携提示词', async () => {
+  const interop = await call('/memory-bubble/api/interop')
+  assert.equal(interop.body.ok, true)
+  assert.equal(interop.body.tools.length, 5)
+  assert.ok(interop.body.prompt.includes('忆泡'))
+  assert.ok(interop.body.data && interop.body.data.dataFile)
+  assert.ok(Array.isArray(interop.body.clients) && interop.body.clients.some((client) => client.name === 'MCP'))
+
+  const bundle = await call(`/memory-bubble/api/ai/bundle?sessionId=${SESSION}`)
+  assert.equal(bundle.body.schema, 'memory-bubble-bundle')
+  assert.ok(bundle.body.graph.nodes.length >= 2)
+  assert.ok(bundle.body.digest.includes('忆泡记忆简报') || bundle.body.digest.length >= 0)
+  assert.equal(bundle.body.tools.length, 5)
+  assert.ok(bundle.body.prompt.includes('忆泡 Memory Bubble'))
+
+  const prompt = await call('/memory-bubble/api/ai/prompt')
+  assert.ok(String(prompt.body).includes('忆泡'))
+})
+
 await check('清理', async () => {
   for (const dispose of cleanups) { try { dispose() } catch { /* ignore */ } }
   await rm(tmpProfile, { recursive: true, force: true })

@@ -577,28 +577,40 @@ export function normalizeExtraction(parsed) {
 
 export function exportGraph(state) {
   return {
-    format: 'memory-bubble',
+    schema: 'memory-bubble/v1',
     version: STATE_VERSION,
     exportedAt: nowIso(),
-    nodes: Object.values(state.nodes).map((node) => ({
-      id: node.id,
-      title: node.title,
-      summary: node.summary,
-      keywords: node.keywords,
-      importance: node.importance,
-      hits: node.hits,
-      kind: node.kind,
-      tone: node.tone,
-      created: node.created,
-      updated: node.updated,
-      sessions: node.sessions,
-    })),
-    edges: Object.values(state.edges),
+    source: { host: 'dsh' },
+    graph: {
+      id: 'default',
+      nodes: Object.values(state.nodes).map((node) => ({
+        id: node.id,
+        title: node.title,
+        summary: node.summary,
+        keywords: node.keywords,
+        importance: node.importance,
+        hits: node.hits,
+        kind: node.kind,
+        tone: node.tone,
+        created: node.created,
+        updated: node.updated,
+        sessions: node.sessions,
+      })),
+      edges: Object.values(state.edges),
+    },
   }
 }
 
+/** 兼容三种输入：v1 信封 {graph}、旧版扁平 {nodes,edges}、记忆包 {graph:{id,nodes,edges}} */
+function unwrapGraph(input) {
+  if (!input || typeof input !== 'object') return null
+  if (input.graph && typeof input.graph === 'object') return input.graph
+  return input
+}
+
 /** 把导出的图并进当前状态（id 冲突时重新分配） */
-export function importGraph(state, graph) {
+export function importGraph(state, input) {
+  const graph = unwrapGraph(input)
   const report = { nodes: 0, edges: 0, skipped: 0 }
   if (!graph || typeof graph !== 'object') return report
   const idMap = new Map()
@@ -646,4 +658,119 @@ export function formatTranscript(messages, maxChars) {
   const cap = maxChars || 6000
   if (out.length > cap) out = '…（更早的对话已省略）\n' + out.slice(out.length - cap)
   return out
+}
+
+/* ------------------------------------------------------------------ 跨 AI 互操作（其他 AI 下载并继承记忆） */
+
+/** 给其他 AI 的便携使用说明（随 bundle 导出，直接贴进 system prompt 即可） */
+export const PORTABLE_PROMPT = [
+  '你有一份来自「忆泡 Memory Bubble」的长期记忆图（memory-bubble v1，JSON）。',
+  '使用规则：',
+  '1. 只采用与当前问题相关的记忆；记忆与用户最新说法冲突时，以最新说法为准，并提醒用户该条记忆可能已过期。',
+  '2. kind = 禁忌 的记忆优先遵守；kind = 偏好 影响表达风格；kind = 计划 / 目标 用于主动提醒；kind = 关系 / 事实 用于称呼与背景。',
+  '3. 不要在回复里整段复述记忆，只在相关处自然引用；记忆里没有的内容不要编造。',
+  '4. 用户说“忘掉 / 别记这个”时，删除对应节点（有写权限时）。',
+  '5. 需要更多细节时向用户确认，不要用记忆推断隐私。',
+].join('\n')
+
+/** 其他 AI 可直接调用的工具清单（JSON-Schema 风格，供 function calling / MCP 转写） */
+export const TOOL_MANIFEST = [
+  {
+    name: 'memory_search',
+    description: '在忆泡长期记忆图谱里检索记忆点。用户提到过去说过的事、偏好、计划时先查这里。',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '关键词或自然语言描述' },
+        limit: { type: 'number', description: '最多返回几条，默认 5' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'memory_brief',
+    description: '读取当前会话的稳定记忆简报。',
+    parameters: {
+      type: 'object',
+      properties: { sessionId: { type: 'string', description: '会话 id，可省略' } },
+    },
+  },
+  {
+    name: 'memory_remember',
+    description: '把一个值得长期记住的信息写进忆泡。',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: '不超过 12 字的短标题' },
+        summary: { type: 'string', description: '1-2 句、可脱离对话独立看懂' },
+        keywords: { type: 'array', items: { type: 'string' } },
+        importance: { type: 'number', description: '0-100' },
+        kind: { type: 'string', description: '偏好|事实|计划|关系|目标|情绪|禁忌' },
+        sessionId: { type: 'string' },
+      },
+      required: ['title', 'summary'],
+    },
+  },
+  {
+    name: 'memory_link',
+    description: '连接两条记忆并写清关系；内容矛盾时 conflict 设为 true。',
+    parameters: {
+      type: 'object',
+      properties: {
+        from: { type: 'string' },
+        to: { type: 'string' },
+        summary: { type: 'string' },
+        relation: { type: 'string', description: '因果|印证|同主题|对立|相关' },
+        conflict: { type: 'boolean' },
+      },
+      required: ['from', 'to', 'summary'],
+    },
+  },
+  {
+    name: 'memory_forget',
+    description: '删除一条记忆（连同它的连线）。',
+    parameters: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+    },
+  },
+]
+
+/** 简单检索：返回按相关度排序的记忆（供 MCP / CLI / 其他 AI 复用） */
+export function searchNodes(state, query, limit = 5) {
+  const text = String(query || '').trim()
+  const words = text.split(/\s+/).filter(Boolean)
+  const scored = Object.values(state.nodes || {})
+    .map((node) => {
+      const haystack = `${node.title} ${node.summary} ${(node.keywords || []).join(' ')}`.toLowerCase()
+      let score = 0
+      for (const word of words) if (word && haystack.includes(word.toLowerCase())) score += 3
+      if (text && haystack.includes(text.toLowerCase())) score += 5
+      score += (node.importance || 50) / 100
+      return { node, score }
+    })
+    .filter((item) => item.score > 1)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, clamp(Number(limit) || 5, 1, 50))
+  return scored.map(({ node }) => node)
+}
+
+/** 打包成可下载的“记忆包”：图 + 简报 + 便携提示词 + 工具清单 */
+export function buildBundle(state, sessionId) {
+  const sess = sessionId ? state.sessions && state.sessions[sessionId] : null
+  const digest = sessionId ? digestFor(state, sessionId) : buildDigest(state, sessionId || 'portable').text
+  return {
+    schema: 'memory-bubble-bundle',
+    schemaVersion: 1,
+    app: { name: 'dsh-memory-bubble', stateVersion: STATE_VERSION },
+    exportedAt: nowIso(),
+    sessionId: sessionId || null,
+    sessionTitle: (sess && sess.title) || null,
+    digest,
+    prompt: PORTABLE_PROMPT,
+    tools: TOOL_MANIFEST,
+    sourceFormat: 'memory-bubble/v1',
+    graph: exportGraph(state).graph,
+  }
 }
