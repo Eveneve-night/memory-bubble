@@ -23,6 +23,8 @@
 
 ### 2. 在 DeepSeek Harness 里使用（插件）
 
+**先下载**：[插件包 v0.1.0](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.1.0/dsh-memory-bubble-v0.1.0.zip)（解压即得 `dsh-memory-bubble/` 目录）
+
 #### 方式 A：本地安装（当前版本）
 
 ```bash
