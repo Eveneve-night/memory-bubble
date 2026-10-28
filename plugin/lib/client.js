@@ -195,7 +195,7 @@ window.__ModuleLoader__.load({
     /* ------------------------------------------------------------ CSS */
 
     const CSS = `
-.mb-root{position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden;
+.mb-root{position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden;container-type:inline-size;
   background:radial-gradient(120% 90% at 15% 0%, #fff7ee 0%, #ffeede 42%, #fff3e6 68%, #fffaf4 100%);
   color:#4a3327;font-family:var(--dsw-font-family-sans,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif);
   --mb-ink:#4a3327;--mb-ink-soft:#8a6f5f;--mb-line:rgba(196,148,118,.28);
@@ -221,7 +221,8 @@ html[data-mb-theme="dark"] .mb-root{
     --mb-chip:rgba(255,255,255,.08);--mb-far-op:.5;
   }
 }
-.mb-header{display:flex;align-items:center;gap:14px;padding:14px 20px;flex:none;border-bottom:1px solid var(--mb-line)}
+.mb-header{display:flex;align-items:center;gap:12px;padding:12px 18px 6px;flex:none}
+.mb-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:0 18px 10px;flex:none;border-bottom:1px solid var(--mb-line)}
 .mb-brand{display:flex;align-items:center;gap:10px;min-width:0}
 .mb-logo{width:34px;height:34px;border-radius:50%;flex:none;
   background:radial-gradient(circle at 32% 26%, #fff5e9 0%, #ffd9b8 26%, #f9a97b 62%, #ee7a54 100%);
@@ -231,7 +232,7 @@ html[data-mb-theme="dark"] .mb-root{
 .mb-sub{font-size:11.5px;color:var(--mb-ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mb-spacer{flex:1}
 .mb-search{display:flex;align-items:center;gap:8px;background:var(--mb-card);border:1px solid var(--mb-line);
-  border-radius:999px;padding:7px 14px;min-width:220px;max-width:300px;flex:1}
+  border-radius:999px;padding:7px 14px;min-width:200px;flex:1 1 220px;max-width:340px}
 .mb-search input{border:0;outline:0;background:transparent;color:var(--mb-ink);font-size:12.5px;width:100%}
 .mb-search input::placeholder{color:var(--mb-ink-soft);opacity:.65}
 .mb-icon-btn{width:32px;height:32px;border-radius:50%;border:1px solid var(--mb-line);background:var(--mb-card);
@@ -274,17 +275,25 @@ html[data-mb-theme="dark"] .mb-node{box-shadow:0 12px 30px rgba(0,0,0,.42), inse
   text-shadow:0 1px 0 rgba(255,255,255,.55);font-weight:560;letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 html[data-mb-theme="dark"] .mb-label{text-shadow:0 1px 2px rgba(0,0,0,.5)}
 .mb-label .kw{display:block;font-size:.86em;font-weight:450;color:var(--mb-ink-soft)}
-.mb-legend{position:absolute;left:18px;bottom:16px;display:flex;align-items:center;gap:10px;padding:8px 14px;border-radius:999px;
-  background:var(--mb-card);border:1px solid var(--mb-line);font-size:11.5px;color:var(--mb-ink-soft);backdrop-filter:blur(8px);pointer-events:none}
+.mb-legend{position:absolute;right:14px;bottom:50px;display:flex;align-items:center;gap:8px;padding:6px 11px;border-radius:999px;
+  background:var(--mb-card);border:1px solid var(--mb-line);font-size:11px;color:var(--mb-ink-soft);backdrop-filter:blur(8px);pointer-events:none}
 .mb-legend b{color:var(--mb-ink);font-weight:600}
-.mb-zoom-pill{position:absolute;right:18px;bottom:16px;padding:7px 13px;border-radius:999px;background:var(--mb-card);
-  border:1px solid var(--mb-line);font-size:11.5px;color:var(--mb-ink-soft);pointer-events:none}
-.mb-tray{flex:none;display:flex;align-items:center;gap:10px;padding:10px 20px 14px;border-top:1px solid var(--mb-line);min-height:56px}
-.mb-tray-label{font-size:12px;color:var(--mb-ink-soft);white-space:nowrap;display:flex;align-items:center;gap:6px}
-.mb-tray-badge{background:var(--mb-coral-soft);color:var(--mb-coral);border-radius:999px;padding:1px 7px;font-weight:600;font-size:11px}
-.mb-tray-chips{display:flex;gap:6px;flex-wrap:wrap;flex:1}
-.mb-chip{display:inline-flex;align-items:center;gap:6px;background:var(--mb-card);border:1px solid var(--mb-line);
-  border-radius:999px;padding:4px 10px;font-size:11.5px;max-width:230px}
+.mb-zoom-pill{position:absolute;right:14px;bottom:14px;padding:5px 11px;border-radius:999px;background:var(--mb-card);
+  border:1px solid var(--mb-line);font-size:11px;color:var(--mb-ink-soft);pointer-events:none}
+.mb-tray{position:absolute;left:14px;bottom:14px;z-index:9;display:flex;align-items:center;gap:8px;
+  max-width:min(66%,540px);padding:5px 6px 5px 10px;border-radius:14px;border:1px solid var(--mb-line);
+  background:var(--mb-card);box-shadow:0 10px 24px rgba(120,74,48,.14);backdrop-filter:blur(10px);font-size:11.5px}
+.mb-tray-label{font-size:11px;color:var(--mb-ink-soft);white-space:nowrap;display:flex;align-items:center;gap:5px}
+.mb-tray-badge{background:var(--mb-coral-soft);color:var(--mb-coral);border-radius:999px;padding:0 6px;font-weight:600;font-size:10.5px}
+.mb-tray-chips{display:flex;gap:5px;flex:1;min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+.mb-tray-chips::-webkit-scrollbar{display:none}
+.mb-tray-more{position:relative;flex:none}
+.mb-tray-menu{position:absolute;right:0;bottom:calc(100% + 8px);width:224px;padding:10px 12px;border-radius:14px;
+  background:var(--mb-card-strong);border:1px solid var(--mb-line);box-shadow:var(--mb-shadow);
+  display:flex;flex-direction:column;gap:9px;font-size:11.5px;z-index:30}
+.mb-tray-menu .row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.mb-chip{display:inline-flex;align-items:center;gap:5px;background:var(--mb-card);border:1px solid var(--mb-line);
+  border-radius:999px;padding:2px 8px;font-size:11px;max-width:150px;flex:none}
 .mb-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mb-chip button{border:0;background:transparent;color:var(--mb-ink-soft);cursor:pointer;font-size:12px;padding:0 0 0 2px}
 .mb-card{position:absolute;top:74px;right:16px;width:330px;max-height:calc(100% - 150px);overflow:auto;z-index:20;
@@ -334,6 +343,22 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
 .mb-banner{display:flex;align-items:center;gap:12px;padding:8px 20px;font-size:12px;color:var(--mb-ink-soft);
   background:var(--mb-chip);border-bottom:1px solid var(--mb-line);flex:none}
 .mb-banner span{flex:1}
+/* 窄窗自适应：搜索独占一行、顶栏收紧、图例让位 */
+@container (max-width:620px){
+  .mb-header{padding:10px 12px 4px;gap:8px}
+  .mb-toolbar{padding:0 12px 8px;gap:6px}
+  .mb-logo{width:28px;height:28px}
+  .mb-title{font-size:14px}
+  .mb-title small,.mb-sub{display:none}
+  .mb-header select{max-width:150px!important}
+  .mb-seg button{padding:3px 8px;font-size:11px}
+  .mb-search{flex:1 1 100%;max-width:none;order:-1;padding:6px 12px}
+  .mb-toolbar .mb-btn{padding:6px 11px;font-size:11.5px}
+  .mb-icon-btn{width:28px;height:28px}
+  .mb-legend,.mb-zoom-pill{display:none}
+  .mb-tray{left:10px;bottom:10px;max-width:calc(100% - 20px)}
+  .mb-card{right:10px;top:96px;width:min(330px,calc(100% - 20px))}
+}
 .mb-settings{display:flex;flex-direction:column;gap:14px;padding:6px 2px;max-width:560px;color:var(--mb-ink);font-size:13px}
 .mb-settings h4{margin:0;font-size:14px}
 .mb-settings p{margin:0;font-size:12px;color:var(--mb-ink-soft);line-height:1.6}
@@ -357,8 +382,15 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
 .mb-win-btn:hover{color:var(--mb-coral);border-color:var(--mb-coral)}
 .mb-window-body{position:relative;flex:1;min-height:0}
 .mb-window .mb-root{position:absolute;inset:0;border:0;border-radius:0;box-shadow:none}
-.mb-win-resize{position:absolute;right:0;bottom:0;width:20px;height:20px;cursor:nwse-resize;z-index:5;
-  background:linear-gradient(135deg,transparent 50%,var(--mb-line) 50%);opacity:.8}
+.mb-rz{position:absolute;z-index:6;touch-action:none}
+.mb-rz.n{left:12px;right:12px;top:0;height:7px;cursor:ns-resize}
+.mb-rz.s{left:12px;right:12px;bottom:0;height:7px;cursor:ns-resize}
+.mb-rz.w{top:12px;bottom:12px;left:0;width:7px;cursor:ew-resize}
+.mb-rz.e{top:12px;bottom:12px;right:0;width:7px;cursor:ew-resize}
+.mb-rz.nw{left:0;top:0;width:14px;height:14px;cursor:nwse-resize}
+.mb-rz.ne{right:0;top:0;width:14px;height:14px;cursor:nesw-resize}
+.mb-rz.sw{left:0;bottom:0;width:14px;height:14px;cursor:nesw-resize}
+.mb-rz.se{right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize}
 .mb-side-entry{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;
   border:1px solid var(--mb-line);background:var(--mb-card);cursor:pointer;padding:0}
 .mb-side-entry .dot{width:18px;height:18px;border-radius:50%;background:radial-gradient(circle at 32% 28%,#fff3e4,#ffc39b 45%,#f4885c 100%);
@@ -417,6 +449,7 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
       const [digestOpen, setDigestOpen] = useState(false)
       const [confirmUndo, setConfirmUndo] = useState(false)
       const [confirmForget, setConfirmForget] = useState(false)
+      const [trayMenu, setTrayMenu] = useState(false)
       const viewportRef = useRef(null)
       const viewRef = useRef({ ox: 0, oy: 0, scale: 1 })
       const dragRef = useRef(null)
@@ -442,6 +475,7 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
         const scale = clamp(Math.min(width / layout.width, height / layout.height) * 0.88, 0.32, 2.4)
         const ox = (width - layout.width * scale) / 2
         const oy = (height - layout.height * scale) / 2
+        viewRef.current.manual = false
         patchView({ ox, oy, scale })
       }, [patchView])
 
@@ -476,6 +510,35 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
         }, 6000)
         return () => clearInterval(timer)
       }, [busy, load, sessionId])
+
+      // 窗口/视口尺寸变化时，图按新比例自适应（用户手动缩放/平移后不再自动抢镜头）
+      useEffect(() => {
+        const viewport = viewportRef.current
+        if (!viewport || typeof ResizeObserver === 'undefined') return
+        let timer = 0
+        const observer = new ResizeObserver(() => {
+          clearTimeout(timer)
+          timer = setTimeout(() => {
+            if (!viewRef.current.manual) fitView(data && data.layout)
+          }, 120)
+        })
+        observer.observe(viewport)
+        return () => { clearTimeout(timer); observer.disconnect() }
+      }, [data, fitView])
+
+      // 浮窗拖动改大小时由 BubbleWindow 广播，作为 ResizeObserver 的兜底
+      useEffect(() => {
+        if (typeof window === 'undefined') return
+        let timer = 0
+        const onResize = () => {
+          clearTimeout(timer)
+          timer = setTimeout(() => {
+            if (!viewRef.current.manual) fitView(data && data.layout)
+          }, 80)
+        }
+        window.addEventListener('memory-bubble:resize', onResize)
+        return () => { clearTimeout(timer); window.removeEventListener('memory-bubble:resize', onResize) }
+      }, [data, fitView])
 
       useEffect(() => {
         const onKey = (event) => {
@@ -545,6 +608,7 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
         const current = viewRef.current
         const nextScale = clamp(current.scale * Math.exp(-event.deltaY * 0.0012), 0.3, 2.4)
         const ratio = nextScale / current.scale
+        viewRef.current.manual = true
         patchView({
           scale: nextScale,
           ox: px - (px - current.ox) * ratio,
@@ -565,7 +629,7 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
         if (!drag) return
         const dx = event.clientX - drag.x
         const dy = event.clientY - drag.y
-        if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true
+        if (Math.abs(dx) + Math.abs(dy) > 2) { drag.moved = true; viewRef.current.manual = true }
         patchView({ ox: drag.ox + dx, oy: drag.oy + dy })
       }
 
@@ -668,7 +732,9 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
           : null,
         h('div', { className: 'mb-seg' },
           h('button', { className: scope === 'session' ? 'on' : '', onClick: () => { setScope('session'); void load({ scope: 'session' }) } }, '本会话'),
-          h('button', { className: scope === 'all' ? 'on' : '', onClick: () => { setScope('all'); void load({ scope: 'all' }) } }, '全部记忆')),
+          h('button', { className: scope === 'all' ? 'on' : '', onClick: () => { setScope('all'); void load({ scope: 'all' }) } }, '全部记忆')))
+
+      const toolbar = h('div', { className: 'mb-toolbar' },
         h('div', { className: 'mb-search' },
           h('span', { style: { opacity: 0.55 } }, '⌕'),
           h('input', {
@@ -792,7 +858,7 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
       },
         nodes.length ? stage : emptyPanel,
         h('div', { className: 'mb-legend' }, h('span', null, '大 = 重要'), h('span', { style: { opacity: 0.5 } }, '·'), h('span', null, '中心 = 高频'), h('span', { style: { opacity: 0.5 } }, '·'), h('b', null, tier.label)),
-        h('div', { className: 'mb-zoom-pill' }, `${Math.round(scale * 100)}% · 滚轮缩放 · 拖拽平移 · 双击适应`),
+        h('div', { className: 'mb-zoom-pill' }, `${Math.round(scale * 100)}% · 滚轮缩放 · 双击适应`),
         h('button', {
           className: 'mb-btn primary',
           title: '手动新增/编辑一条记忆；自动生成由设置里的开关控制，不会走这个按钮',
@@ -800,38 +866,59 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
           onClick: () => { void addDraft() },
         }, '＋ 手动记一条'))
 
-      const tray = h('div', { className: 'mb-tray' },
-        h('div', { className: 'mb-tray-label' },
-          '记忆托盘', h('span', { className: 'mb-tray-badge' }, String((session.tray || []).length)),
-          h('span', { style: { opacity: 0.65, fontSize: 11 } }, '点「引用到本轮」或 Shift 点击泡泡')),
-        h('div', { className: 'mb-tray-chips' },
-          trayNodes.length
-            ? trayNodes.map((node) => h(Chip, { key: node.id, node, onRemove: () => removeFromTray(node.id) }))
-            : h('span', { style: { fontSize: 11.5, color: 'var(--mb-ink-soft)', opacity: 0.7 } }, '托盘里的记忆会被钉在本轮简报最上面；不选则按重要度自动取前几条。')),
-        sessionId
-          ? h('label', { className: 'mb-tray-label', title: '关闭后这个会话不再自动读取对话；仍可手动点「立即总结」' },
-            h(Switch, { on: session.enabled !== false, onClick: async () => {
-              try {
-                await api('/session', { method: 'POST', body: JSON.stringify({ sessionId, enabled: session.enabled === false }) })
-                await load({ silent: true, sessionId })
-                toast(session.enabled === false ? '本会话已恢复自动生成' : '本会话已暂停自动生成')
-              } catch (err) { toast(String(err.message || err)) }
-            } }), '本会话自动生成')
-          : null,
-        sessionId && (stats.sessionNodes || 0) > 0
-          ? h('button', { className: 'mb-btn ghost' + (confirmForget ? ' danger' : ''), title: '删除本会话的全部记忆（可重新开始）', onClick: async () => {
-            if (!confirmForget) { setConfirmForget(true); setTimeout(() => setConfirmForget(false), 3000); return }
-            try {
-              const result = await api('/session/forget', { method: 'POST', body: JSON.stringify({ sessionId }) })
-              setConfirmForget(false)
-              toast(`已清空本会话的 ${result.removed || 0} 条记忆`)
-              await load({ silent: false, sessionId })
-            } catch (err) { toast(String(err.message || err)) }
-          } }, confirmForget ? '再点一次清空' : '清空本会话')
-          : null,
-        h('button', { className: 'mb-btn ghost', disabled: !sessionId, onClick: () => { setDigestOpen(true) } }, '预览简报'),
-        h('div', { style: { fontSize: 11, color: 'var(--mb-ink-soft)', whiteSpace: 'nowrap' } },
-          session.pending ? '本轮总结中…' : session.lastError ? `上次总结失败：${String(session.lastError).slice(0, 22)}` : session.lastExtractAt ? `上次总结 ${fmtDate(session.lastExtractAt)}` : '尚未总结'))
+      const trayStatus = session.pending ? '总结中…'
+        : session.lastError ? '上次失败'
+          : session.lastExtractAt ? `上次 ${fmtDate(session.lastExtractAt)}`
+            : '尚未总结'
+
+      const tray = sessionId
+        ? h('div', { className: 'mb-tray' },
+          h('div', { className: 'mb-tray-label' },
+            '托盘', trayNodes.length ? h('span', { className: 'mb-tray-badge' }, String(trayNodes.length)) : null),
+          h('div', { className: 'mb-tray-chips' },
+            trayNodes.length
+              ? trayNodes.map((node) => h(Chip, { key: node.id, node, onRemove: () => removeFromTray(node.id) }))
+              : h('span', { style: { fontSize: 11, color: 'var(--mb-ink-soft)', opacity: 0.7, whiteSpace: 'nowrap' } }, 'Shift 点泡泡加入')),
+          h('div', { className: 'mb-tray-more' },
+            h('button', {
+              className: 'mb-icon-btn',
+              style: { width: 24, height: 24, fontSize: 13 },
+              title: '托盘与自动生成状态',
+              onClick: (event) => { event.stopPropagation(); setTrayMenu(!trayMenu) },
+            }, '⋯'),
+            trayMenu
+              ? h('div', { className: 'mb-tray-menu' },
+                h('div', { className: 'row' },
+                  h('span', null, '本会话自动生成'),
+                  h(Switch, { on: session.enabled !== false, onClick: async () => {
+                    try {
+                      await api('/session', { method: 'POST', body: JSON.stringify({ sessionId, enabled: session.enabled === false }) })
+                      await load({ silent: true, sessionId })
+                      toast(session.enabled === false ? '本会话已恢复自动生成' : '本会话已暂停自动生成')
+                    } catch (err) { toast(String(err.message || err)) }
+                  } })),
+                h('div', { className: 'row' },
+                  h('span', null, '本会话记忆'),
+                  h('span', { style: { opacity: 0.75 } }, String(stats.sessionNodes || 0) + ' 条')),
+                h('div', { className: 'row' },
+                  h('span', null, '最近生成'),
+                  h('span', { style: { opacity: 0.75 } }, trayStatus)),
+                h('div', { className: 'row', style: { marginTop: 2 } },
+                  h('button', { className: 'mb-btn ghost', onClick: () => { setTrayMenu(false); setDigestOpen(true) } }, '预览简报'),
+                  (stats.sessionNodes || 0) > 0
+                    ? h('button', { className: 'mb-btn ghost' + (confirmForget ? ' danger' : ''), onClick: async () => {
+                      if (!confirmForget) { setConfirmForget(true); setTimeout(() => setConfirmForget(false), 3000); return }
+                      try {
+                        const result = await api('/session/forget', { method: 'POST', body: JSON.stringify({ sessionId }) })
+                        setConfirmForget(false)
+                        setTrayMenu(false)
+                        toast(`已清空本会话的 ${result.removed || 0} 条记忆`)
+                        await load({ silent: false, sessionId })
+                      } catch (err) { toast(String(err.message || err)) }
+                    } }, confirmForget ? '确认清空？' : '清空本会话')
+                    : null))
+              : null))
+        : null
 
       const card = selectedNode
         ? h(NodeCard, { key: selectedNode.id === '__new__' ? 'new' : selectedNode.id, node: selectedNode, sessionId, onClose: () => setSelected(null), onReload: (silent) => load({ silent: true, sessionId }), toast })
@@ -859,6 +946,7 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
 
       return h('div', { className: 'mb-root', 'data-mb-theme': scheme },
         header,
+        toolbar,
         banner,
         viewport,
         tray,
@@ -883,19 +971,39 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
 
       if (!state.open) return null
 
+      const notifyResize = () => {
+        try { window.dispatchEvent(new CustomEvent('memory-bubble:resize')) } catch { /* ignore */ }
+      }
+
       const move = (event) => {
         const drag = dragRef.current
         if (!drag) return
+        const dx = event.clientX - drag.startX
+        const dy = event.clientY - drag.startY
         if (drag.mode === 'move') {
-          setRect(clampRect(Object.assign({}, drag.base, { x: event.clientX - drag.dx, y: event.clientY - drag.dy })))
-        } else {
-          setRect(clampRect(Object.assign({}, drag.base, { w: drag.base.w + event.clientX - drag.startX, h: drag.base.h + event.clientY - drag.startY })))
+          setRect(clampRect(Object.assign({}, drag.base, { x: drag.base.x + dx, y: drag.base.y + dy })))
+          return
         }
+        // 八方向缩放：拖哪条边/哪个角，就只改对应方向；图会按新比例自适应（ResizeObserver + 本事件兜底）
+        const dir = drag.dir || 'se'
+        let x = drag.base.x
+        let y = drag.base.y
+        let w = drag.base.w
+        let h = drag.base.h
+        if (dir.indexOf('e') >= 0) w = drag.base.w + dx
+        if (dir.indexOf('s') >= 0) h = drag.base.h + dy
+        if (dir.indexOf('w') >= 0) { w = drag.base.w - dx; x = drag.base.x + dx }
+        if (dir.indexOf('n') >= 0) { h = drag.base.h - dy; y = drag.base.y + dy }
+        if (w < 380) { if (dir.indexOf('w') >= 0) x = drag.base.x + drag.base.w - 380; w = 380 }
+        if (h < 360) { if (dir.indexOf('n') >= 0) y = drag.base.y + drag.base.h - 360; h = 360 }
+        setRect(clampRect({ x, y, w, h }))
+        notifyResize()
       }
       const end = () => {
         if (!dragRef.current) return
         dragRef.current = null
         setActive(false)
+        notifyResize()
         if (typeof window !== 'undefined') {
           window.removeEventListener('pointermove', move)
           window.removeEventListener('pointerup', end)
@@ -905,11 +1013,12 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
           return current
         })
       }
-      const begin = (mode, event) => {
+      const begin = (mode, event, dir) => {
         if (event.button !== 0) return
         if (mode === 'move' && event.target && event.target.closest && event.target.closest('.mb-win-btn')) return
         event.preventDefault()
-        dragRef.current = { mode, dx: event.clientX - rect.x, dy: event.clientY - rect.y, startX: event.clientX, startY: event.clientY, base: rect }
+        event.stopPropagation()
+        dragRef.current = { mode, dir: dir || null, dx: event.clientX - rect.x, dy: event.clientY - rect.y, startX: event.clientX, startY: event.clientY, base: rect }
         setActive(true)
         if (typeof window !== 'undefined') {
           window.addEventListener('pointermove', move)
@@ -929,13 +1038,14 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
         h('div', { className: 'mb-winbar', onPointerDown: (event) => begin('move', event) },
           h('span', { className: 'dot' }),
           h('b', null, '忆泡'),
-          h('span', { className: 'sub' }, '随聊随记 · 可拖动/缩放'),
+          h('span', { className: 'sub' }, '拖动标题栏移动 · 拖边缘缩放'),
           h('div', { className: 'mb-win-actions' },
-            h('button', { className: 'mb-win-btn', title: '回到默认位置', onClick: reset }, '⌂'),
+            h('button', { className: 'mb-win-btn', title: '回到默认位置与大小', onClick: reset }, '⌂'),
             h('button', { className: 'mb-win-btn', title: '关闭（本会话不再显示；侧栏图标可再打开）', onClick: () => patchWin({ open: false }) }, '✕'))),
         h('div', { className: 'mb-window-body' },
           h(GraphPanel, { ctx }),
-          h('div', { className: 'mb-win-resize', title: '拖动改变大小', onPointerDown: (event) => begin('resize', event) })),
+          ['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'].map((dir) =>
+            h('div', { key: dir, className: 'mb-rz ' + dir, title: '拖动改变窗口大小', onPointerDown: (event) => begin('resize', event, dir) }))),
         active ? h('div', { style: { position: 'absolute', inset: 0 } }) : null)
     }
 

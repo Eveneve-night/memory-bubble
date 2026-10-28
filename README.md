@@ -23,7 +23,9 @@
 
 ### 2. 在 DeepSeek Harness 里使用（插件）
 
-**先下载**：[插件包 v0.3.1](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.3.1/dsh-memory-bubble-v0.3.1.zip)（解压即得 `dsh-memory-bubble/` 目录）
+**先下载**：[插件包 v0.3.2](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.3.2/dsh-memory-bubble-v0.3.2.zip)（解压即得 `dsh-memory-bubble/`；也可直接安装 [`.tgz`](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.3.2/dsh-memory-bubble-0.3.2.tgz)）
+
+![忆泡浮窗 v0.3.2](assets/shot-880.png)
 
 #### 方式 A：本地安装（当前版本）
 
@@ -114,7 +116,8 @@ assets/    README 截图
 - ✅ v0.2.2：按会话归属（新装从零开始）、默认不读对话、防开局幻觉、一键清空本会话；已真机安装验证
 - ✅ v0.3.0：浮窗化——侧栏图标打开可拖动/缩放的小窗口、窗口内关闭、默认关闭；移除 main 面板与输入框药丸，避免接管界面
 - ✅ v0.3.1：修复工具注册 schema（5 个工具改为顶层 `type: 'object'` + `properties` + `required` 的标准 JSON Schema，修掉模型侧 `parameters` 校验报错）；自检 core 13/13、plugin 14/14
-- ⏳ 下一步：把 v0.3.1 真机懒加载验证清单和截图补进 README；记忆自动归档与「遗忘曲线」
+- ✅ v0.3.2：八方向缩放（四边+四角，图形随窗口比例自适应）、底部托盘缩成局部浮层、窄窗两行自适应排版（搜索独占一行、隐藏副标题/图例）；已真机安装验证
+- ⏳ 下一步：记忆自动归档与「遗忘曲线」；官方 App 版记忆卡流程（方案在 `docs/`）
 
 已知取舍：记忆抽取是**摘要式**的，不做向量检索（图 + 简报足够小，先把「看得见」做对）；冲突检测是启发式，需要人确认。
 

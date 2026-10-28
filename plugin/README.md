@@ -1,4 +1,4 @@
-# 忆泡 · DSH 插件（dsh-memory-bubble）v0.3.1
+# 忆泡 · DSH 插件（dsh-memory-bubble）v0.3.2
 
 把 AI 与你的日常对话，沉淀成一张可管理、可继承的暖色记忆泡泡图。
 宿主半负责「抽取 / 存储 / 简报 / 注入」，客户端半负责「可视化 / 编辑 / 托盘」。
@@ -6,6 +6,7 @@ v0.2 起新增**跨 AI 互操作层**（MCP / CLI / HTTP / 记忆包），代码
 v0.2.2 起记忆**按会话归属**：新装是空的、只积攒本会话、默认不读对话。
 v0.3.0 起改为**浮窗**：默认关闭、点左侧栏「忆泡」才打开，窗口可拖动/缩放、窗口内可关闭；不再占用中央主面板。
 v0.3.1 修复工具 schema：5 个工具统一为标准 JSON Schema（顶层 `type: 'object'`），修掉模型侧 `parameters` 校验报错。
+v0.3.2 起窗口支持**八方向缩放**（四边+四角），图形随窗口比例自适应；底部托盘缩成局部浮层，窄窗自动两行排版。
 
 ## 目录
 
@@ -28,14 +29,14 @@ plugin/
 | 位置 | 组件 | 作用 |
 | --- | --- | --- |
 | 左侧栏 | 「忆泡」图标（`sidebar.panellist`） | 打开/关闭记忆浮窗；排在已装插件之后（order 900），不改动别人的入口 |
-| 浮窗 | 泡泡图（`shell.overlay`） | 暖色泡泡、三档语义缩放、点泡看详情、改重要性滑杆、编辑/删除、冲突连线、搜索、撤销上一批、导出/导入；默认**关闭**，拖动标题栏移动、右下角缩放、右上角关闭 |
+| 浮窗 | 泡泡图（`shell.overlay`） | 暖色泡泡、三档语义缩放、点泡看详情、改重要性滑杆、编辑/删除、冲突连线、搜索、撤销上一批、导出/导入；默认**关闭**，拖动标题栏移动、拖**四边/四角**缩放、右上角关闭 |
 | 设置页 | 「忆泡」分区（`settings.section`） | **读取对话并自动生成** 总开关、每轮最多生成条数、记忆总量上限、去抖/最小间隔、注入方式、导出/导入 |
 | 对话注入 | `systemPrompt.section` + `agent/pre-step` 兜底 | 每轮把稳定简报注入上下文；深度模式可写在 system prompt 里提高缓存命中 |
 | 工具 | `memory_search` / `memory_brief` / `memory_remember` / `memory_link` / `memory_forget` | 让 AI 自己查记忆、主动记一条、连线、删除 |
 
 「＋ 手动记一条」会先在浮窗里长出一个新泡泡，并弹出小编辑窗填写**内容、时间、关键词、类型、重要性**；保存后即成为一条手动记忆（不经过 AI，也不受自动生成开关影响）。
 
-交互要点：滚轮缩放（三档信息层级）、拖动平移、双击自适应、点泡泡看卡片、Shift+点泡泡放进本轮托盘（「注入本对话」）、点连线看关系并「重新校验冲突」、Esc 关闭卡片；浮窗的位置/大小/开关状态记在 `localStorage('memory-bubble.window.v1')`，每个会话独立记住是否关闭。
+交互要点：滚轮缩放（三档信息层级）、拖动平移、双击自适应、点泡泡看卡片、Shift+点泡泡放进本轮托盘（「注入本对话」）、点连线看关系并「重新校验冲突」、Esc 关闭卡片；鼠标移到窗口四条边/四个角可拖动改变窗口大小，泡泡图会按新比例自动适配；浮窗的位置/大小/开关状态记在 `localStorage('memory-bubble.window.v1')`，每个会话独立记住是否关闭。
 
 ## 数据与隐私
 
@@ -129,7 +130,7 @@ GET  /memory-bubble/api/ai/prompt         // 便携提示词纯文本
 用 plugin_manager 的 install_bundle 安装 "D:\Deepseek Harness\memory-bubble\plugin"
 ```
 
-插件管理器接受绝对路径 / `file:` / `link:` / git 地址 / `.tgz`，会把它写进 profile 依赖并激活 bundle；发布页也提供 `dsh-memory-bubble-v0.3.0.tgz`，可直接 `install_bundle` 该文件的绝对路径或下载 URL。安装完成后刷新页面，左侧栏出现「忆泡」；点它打开浮窗。
+插件管理器接受绝对路径 / `file:` / `link:` / git 地址 / `.tgz`，会把它写进 profile 依赖并激活 bundle；发布页也提供 `dsh-memory-bubble-v0.3.2.tgz`，可直接 `install_bundle` 该文件的绝对路径或下载 URL。安装完成后刷新页面，左侧栏出现「忆泡」；点它打开浮窗。
 
 **方式 B：手工。** 把 `plugin/` 复制或软链到 `<profile>/node_modules/dsh-memory-bubble`，在 profile 的 `dsh.profile.bundles` 里加 `dsh-memory-bubble`，刷新页面。
 
@@ -141,13 +142,14 @@ GET  /memory-bubble/api/ai/prompt         // 便携提示词纯文本
 cd plugin
 node dev/test-core.mjs       # 13 项：合并/去重/布局/简报/撤销/导入导出/解析健壮性/上限/按会话/手动时间
 node dev/test-plugin.mjs     # 14 项：apply 注册与路由、零起点、防幻觉、抽取、会话隔离、手动新增时间、清空、工具 schema、注入、导入导出、客户端三 slot、浮窗默认关闭/关闭按钮
+node dev/test-client.mjs     # 14 项：真实 React 渲染的浮窗、八方向缩放手柄存在、顶栏/托盘结构、拖拽缩放后按比例自适应
 node --check lib/client.js   # 客户端单文件语法
 node --check lib/index.js    # 宿主半语法
 ```
 
 互操作层单独测（仓库根目录）：`node interop/dev/test-interop.mjs`（5 项：CLI / bundle schema / MCP 全套）。
 
-当前结果：core 13/13、plugin（宿主+客户端）14/14、interop 5/5、`node --check` 四文件通过。
+当前结果：core 13/13、plugin（宿主+客户端）14/14、client 14/14、interop 5/5、`node --check` 四文件通过。
 
 ## 上次「失控」的排查结论（v0.3.0）
 
