@@ -20,3 +20,4 @@ t-*.png
 qa-final.png
 _qa.mjs
 _probe*.mjs
+.qa-window/

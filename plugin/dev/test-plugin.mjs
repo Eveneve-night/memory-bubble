@@ -298,11 +298,25 @@ await check('点侧栏图标打开浮窗，浮窗内关闭按钮可收起', asyn
   const entry = render(side.component({ ctx: clientCtx }))
   assert.equal(entry.type, 'button')
   entry.props.onClick()
+  // 真实鼠标点击带 detail>0（已由 pointerdown 处理）；键盘 Enter 是 detail=0
+  entry.props.onClick({ detail: 0, preventDefault() {}, stopPropagation() {} })
   const persisted = JSON.parse(fakeLocalStorage.get('memory-bubble.window.v1'))
   assert.equal(persisted.open, true)
   const overlay = registrations.find((item) => item.options.name === 'shell.overlay')
   const win = render(overlay.component({ ctx: clientCtx }))
   assert.equal(win.props.className, 'mb-window')
+  // 八方向缩放把手：n/s/e/w + 四个角
+  const handles = []
+  const collect = (node) => {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) { for (const item of node) collect(item); return }
+    if (node.props && typeof node.props.className === 'string' && node.props.className.indexOf('mb-rz') === 0) handles.push(node)
+    for (const child of ensureArray(node.props && node.props.children)) collect(child)
+  }
+  collect(win)
+  assert.equal(handles.length, 8, '应渲染 8 个缩放把手，实际 ' + handles.length)
+  assert.deepEqual(handles.map((node) => node.props.className.split(' ')[1]).sort(), ['e', 'n', 'ne', 'nw', 's', 'se', 'sw', 'w'])
+  assert.ok(handles.every((node) => typeof node.props.onPointerDown === 'function'))
   const header = ensureArray(win.props.children).find((child) => child && child.props && child.props.className === 'mb-winbar')
   const flat = []
   const walk = (node) => {

@@ -392,7 +392,8 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
 .mb-rz.sw{left:0;bottom:0;width:14px;height:14px;cursor:nesw-resize}
 .mb-rz.se{right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize}
 .mb-side-entry{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;
-  border:1px solid var(--mb-line);background:var(--mb-card);cursor:pointer;padding:0}
+  border:1px solid var(--mb-line);background:var(--mb-card);cursor:pointer;padding:0;position:relative;z-index:2;
+  touch-action:manipulation;pointer-events:auto;-webkit-user-select:none;user-select:none}
 .mb-side-entry .dot{width:18px;height:18px;border-radius:50%;background:radial-gradient(circle at 32% 28%,#fff3e4,#ffc39b 45%,#f4885c 100%);
   box-shadow:0 2px 8px rgba(238,122,84,.45)}
 .mb-side-entry.on{border-color:var(--mb-coral);box-shadow:0 0 0 2px rgba(244,113,77,.18)}
@@ -1031,6 +1032,31 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
         setRect(clampRect(null))
       }
 
+      // 内容会挂载在窗口里；窗口尺寸变化（拖拽/拖角）时广播，让图按新比例自适应
+      const bodyRef = useRef(null)
+      useEffect(() => {
+        const body = bodyRef.current
+        if (!body) return
+        let timer = 0
+        const broadcast = () => {
+          clearTimeout(timer)
+          timer = setTimeout(() => notifyResize(), 60)
+        }
+        body.addEventListener('transitionend', broadcast)
+        let observer = null
+        try {
+          if (typeof ResizeObserver !== 'undefined') {
+            observer = new ResizeObserver(broadcast)
+            observer.observe(body)
+          }
+        } catch { /* ignore */ }
+        return () => {
+          clearTimeout(timer)
+          body.removeEventListener('transitionend', broadcast)
+          if (observer) observer.disconnect()
+        }
+      }, [])
+
       return h('div', {
         className: 'mb-window',
         style: { left: rect.x + 'px', top: rect.y + 'px', width: rect.w + 'px', height: rect.h + 'px' },
@@ -1042,7 +1068,7 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
           h('div', { className: 'mb-win-actions' },
             h('button', { className: 'mb-win-btn', title: '回到默认位置与大小', onClick: reset }, '⌂'),
             h('button', { className: 'mb-win-btn', title: '关闭（本会话不再显示；侧栏图标可再打开）', onClick: () => patchWin({ open: false }) }, '✕'))),
-        h('div', { className: 'mb-window-body' },
+        h('div', { className: 'mb-window-body', ref: bodyRef },
           h(GraphPanel, { ctx }),
           ['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'].map((dir) =>
             h('div', { key: dir, className: 'mb-rz ' + dir, title: '拖动改变窗口大小', onPointerDown: (event) => begin('resize', event, dir) }))),
@@ -1051,11 +1077,26 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
 
     function SideEntry({ ctx }) {
       const state = useWindowState()
+      // 键盘/无障碍：Enter / 空格 也走同一个开关；指针事件在鼠标、触屏上都可靠
+      const toggle = (event) => {
+        if (event && event.preventDefault) event.preventDefault()
+        if (event && event.stopPropagation) event.stopPropagation()
+        patchWin({ open: !win.open })
+      }
       return h('button', {
         className: 'mb-side-entry' + (state.open ? ' on' : ''),
         title: state.open ? '收起忆泡（不停止本会话记录）' : '打开忆泡记忆图',
         'aria-label': '忆泡',
-        onClick: () => patchWin({ open: !win.open }),
+        'aria-pressed': state.open ? 'true' : 'false',
+        draggable: false,
+        onPointerDown: (event) => {
+          if (event.button !== 0) return
+          toggle(event)
+        },
+        onClick: (event) => {
+          if (event && event.detail === 0) toggle(event)
+          else if (event && event.preventDefault) event.preventDefault()
+        },
       }, h('span', { className: 'dot' }))
     }
 
