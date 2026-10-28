@@ -223,7 +223,9 @@ html[data-mb-theme="dark"] .mb-root{
 }
 .mb-header{display:flex;align-items:center;gap:12px;padding:12px 18px 6px;flex:none}
 .mb-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:0 18px 10px;flex:none;border-bottom:1px solid var(--mb-line)}
-.mb-brand{display:flex;align-items:center;gap:10px;min-width:0}
+.mb-brand{display:flex;align-items:center;gap:10px;min-width:0;flex:0 1 220px}
+.mb-brand>div:last-child{min-width:0}
+.mb-header select{min-width:0;flex:0 1 210px}
 .mb-logo{width:34px;height:34px;border-radius:50%;flex:none;
   background:radial-gradient(circle at 32% 26%, #fff5e9 0%, #ffd9b8 26%, #f9a97b 62%, #ee7a54 100%);
   box-shadow:0 6px 18px rgba(238,122,84,.45), inset 0 -3px 8px rgba(214,105,66,.35)}
@@ -249,8 +251,8 @@ html[data-mb-theme="dark"] .mb-root{
 html[data-mb-theme="dark"] .mb-btn.danger{color:#ff9a80}
 .mb-btn[disabled]{opacity:.45;cursor:not-allowed;transform:none}
 .mb-chip-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.mb-seg{display:flex;background:var(--mb-chip);border-radius:999px;padding:3px;gap:2px}
-.mb-seg button{border:0;background:transparent;color:var(--mb-ink-soft);font-size:11.5px;padding:4px 10px;border-radius:999px;cursor:pointer}
+.mb-seg{display:flex;background:var(--mb-chip);border-radius:999px;padding:3px;gap:2px;flex:none}
+.mb-seg button{border:0;background:transparent;color:var(--mb-ink-soft);font-size:11.5px;padding:4px 10px;border-radius:999px;cursor:pointer;white-space:nowrap}
 .mb-seg button.on{background:var(--mb-card-strong);color:var(--mb-ink);box-shadow:0 2px 8px rgba(140,92,60,.16)}
 .mb-viewport{position:relative;flex:1;overflow:hidden;cursor:grab;touch-action:none}
 .mb-viewport.dragging{cursor:grabbing}
@@ -350,13 +352,17 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
   .mb-logo{width:28px;height:28px}
   .mb-title{font-size:14px}
   .mb-title small,.mb-sub{display:none}
-  .mb-header select{max-width:150px!important}
+  .mb-header{display:grid;grid-template-columns:auto minmax(0,1fr) auto}
+  .mb-header .mb-spacer{display:none}
+  .mb-brand{gap:6px}
+  .mb-header select{min-width:0;width:100%;max-width:150px!important;justify-self:end}
   .mb-seg button{padding:3px 8px;font-size:11px}
   .mb-search{flex:1 1 100%;max-width:none;order:-1;padding:6px 12px}
   .mb-toolbar .mb-btn{padding:6px 11px;font-size:11.5px}
   .mb-icon-btn{width:28px;height:28px}
   .mb-legend,.mb-zoom-pill{display:none}
-  .mb-tray{left:10px;bottom:10px;max-width:calc(100% - 20px)}
+  .mb-tray{left:10px;bottom:10px;max-width:70%}
+  .mb-tray .mb-chip{max-width:100px}
   .mb-card{right:10px;top:96px;width:min(330px,calc(100% - 20px))}
 }
 .mb-settings{display:flex;flex-direction:column;gap:14px;padding:6px 2px;max-width:560px;color:var(--mb-ink);font-size:13px}
@@ -366,20 +372,20 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
 .mb-settings input[type=number],.mb-settings select{border:1px solid var(--mb-line);background:var(--mb-chip);color:var(--mb-ink);border-radius:8px;padding:5px 8px;font-size:12px}
 .mb-settings .hint{font-size:11px;color:var(--mb-ink-soft)}
 /* 浮窗：可拖动、可缩放、页面内关闭；默认不打开 */
-.mb-window{position:fixed;z-index:60;display:flex;flex-direction:column;min-width:380px;min-height:360px;
-  border-radius:24px;background:var(--mb-bg);border:1px solid var(--mb-line);box-shadow:0 26px 70px rgba(120,74,48,.24);
+.mb-window{position:fixed;z-index:60;display:flex;flex-direction:column;min-width:380px;min-height:360px;box-sizing:border-box;
+  border-radius:24px;background:#fffaf4;border:1px solid #e6d4c8;box-shadow:0 26px 70px rgba(120,74,48,.24);
   overflow:hidden;animation:mb-win-in .18s ease}
 @keyframes mb-win-in{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
 html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
-.mb-winbar{display:flex;align-items:center;gap:10px;padding:9px 12px 9px 16px;cursor:move;flex:none;user-select:none;
-  border-bottom:1px solid var(--mb-line);background:var(--mb-card);color:var(--mb-ink)}
+.mb-winbar{display:flex;align-items:center;gap:8px;padding:9px 12px 9px 16px;cursor:move;flex:none;user-select:none;touch-action:none;
+  border-bottom:1px solid #e6d4c8;background:#fff;color:#4a3327}
 .mb-winbar .dot{width:14px;height:14px;border-radius:50%;background:radial-gradient(circle at 32% 28%,#fff3e4,#ffc39b 45%,#f4885c 100%);box-shadow:0 2px 6px rgba(238,122,84,.5)}
 .mb-winbar b{font-size:13px;font-weight:650}
-.mb-winbar .sub{font-size:10.5px;color:var(--mb-ink-soft);opacity:.8}
+.mb-winbar .sub{font-size:10.5px;color:#8a6f5f}
 .mb-win-actions{margin-left:auto;display:flex;align-items:center;gap:6px}
-.mb-win-btn{width:26px;height:26px;border-radius:50%;border:1px solid var(--mb-line);background:var(--mb-card-strong);
-  color:var(--mb-ink-soft);cursor:pointer;font-size:13px;line-height:1;display:flex;align-items:center;justify-content:center}
-.mb-win-btn:hover{color:var(--mb-coral);border-color:var(--mb-coral)}
+.mb-win-btn{width:26px;height:26px;border-radius:50%;border:1px solid #e6d4c8;background:#fff;
+  color:#8a6f5f;cursor:pointer;font-size:13px;line-height:1;display:flex;align-items:center;justify-content:center}
+.mb-win-btn:hover{color:#f4714d;border-color:#f4714d}
 .mb-window-body{position:relative;flex:1;min-height:0}
 .mb-window .mb-root{position:absolute;inset:0;border:0;border-radius:0;box-shadow:none}
 .mb-rz{position:absolute;z-index:6;touch-action:none}
@@ -879,7 +885,7 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
           h('div', { className: 'mb-tray-chips' },
             trayNodes.length
               ? trayNodes.map((node) => h(Chip, { key: node.id, node, onRemove: () => removeFromTray(node.id) }))
-              : h('span', { style: { fontSize: 11, color: 'var(--mb-ink-soft)', opacity: 0.7, whiteSpace: 'nowrap' } }, 'Shift 点泡泡加入')),
+              : h('span', { title: '按住 Shift 点击泡泡，加入本轮记忆', style: { fontSize: 11, color: 'var(--mb-ink-soft)', opacity: 0.7, whiteSpace: 'nowrap' } }, 'Shift 点选')),
           h('div', { className: 'mb-tray-more' },
             h('button', {
               className: 'mb-icon-btn',
@@ -970,8 +976,6 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
         setRect(clampRect(win.rect))
       }, [state.open])
 
-      if (!state.open) return null
-
       const notifyResize = () => {
         try { window.dispatchEvent(new CustomEvent('memory-bubble:resize')) } catch { /* ignore */ }
       }
@@ -1011,6 +1015,7 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
         }
         setRect((current) => {
           patchWin({ rect: current })
+          saveWindowPrefs()
           return current
         })
       }
@@ -1055,23 +1060,24 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
           body.removeEventListener('transitionend', broadcast)
           if (observer) observer.disconnect()
         }
-      }, [])
+      }, [state.open])
+
+      if (!state.open) return null
 
       return h('div', {
         className: 'mb-window',
         style: { left: rect.x + 'px', top: rect.y + 'px', width: rect.w + 'px', height: rect.h + 'px' },
       },
-        h('div', { className: 'mb-winbar', onPointerDown: (event) => begin('move', event) },
+        h('div', { className: 'mb-winbar', title: '拖动移动窗口，拖边框调整大小', onPointerDown: (event) => begin('move', event) },
           h('span', { className: 'dot' }),
           h('b', null, '忆泡'),
-          h('span', { className: 'sub' }, '拖动标题栏移动 · 拖边缘缩放'),
+          h('span', { className: 'sub' }, '记忆图谱'),
           h('div', { className: 'mb-win-actions' },
             h('button', { className: 'mb-win-btn', title: '回到默认位置与大小', onClick: reset }, '⌂'),
             h('button', { className: 'mb-win-btn', title: '关闭（本会话不再显示；侧栏图标可再打开）', onClick: () => patchWin({ open: false }) }, '✕'))),
-        h('div', { className: 'mb-window-body', ref: bodyRef },
-          h(GraphPanel, { ctx }),
-          ['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'].map((dir) =>
-            h('div', { key: dir, className: 'mb-rz ' + dir, title: '拖动改变窗口大小', onPointerDown: (event) => begin('resize', event, dir) }))),
+        h('div', { className: 'mb-window-body', ref: bodyRef }, h(GraphPanel, { ctx })),
+        ['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'].map((dir) =>
+          h('div', { key: dir, className: 'mb-rz ' + dir, title: '拖动改变窗口大小', onPointerDown: (event) => begin('resize', event, dir) })),
         active ? h('div', { style: { position: 'absolute', inset: 0 } }) : null)
     }
 
