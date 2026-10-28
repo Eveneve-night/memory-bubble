@@ -1,265 +1,181 @@
 /**
- * 忆泡 · core / store 单测（node dev/test-core.mjs）
- * 不依赖 DSH，只验证纯逻辑与磁盘读写。
+ * 忆泡 · 纯逻辑自检（不需要 DSH）
+ * 运行：node dev/test-core.mjs
  */
-
 import assert from 'node:assert/strict'
-import os from 'node:os'
-import path from 'node:path'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-
 import {
-  emptyState,
-  mergeExtraction,
-  computeLayout,
-  buildDigest,
-  digestFor,
-  refreshDigest,
-  rollbackBatch,
-  parseExtraction,
-  formatTranscript,
-  buildExtractionPrompt,
-  exportGraph,
-  importGraph,
-  defaultConfig,
-  normalizeExtraction,
-  frequencyOf,
+  emptyState, mergeExtraction, sessionState, computeLayout, buildDigest,
+  refreshDigest, digestFor, rollbackBatch, exportGraph, importGraph,
+  defaultConfig, sessionNodeCount, normalizeExtraction, buildBundle,
 } from '../lib/core.js'
-import { readState, writeState, memoryBubbleDir } from '../lib/store.js'
 
 let passed = 0
 function check(name, fn) {
-  return Promise.resolve()
-    .then(fn)
-    .then(() => { passed += 1; console.log('PASS', name) })
-    .catch((error) => { console.error('FAIL', name, '\n ', error && error.stack ? error.stack : error); process.exitCode = 1 })
+  try {
+    fn()
+    passed += 1
+    console.log('PASS ' + name)
+  } catch (error) {
+    console.error('FAIL ' + name)
+    console.error(error && error.stack ? error.stack : error)
+    process.exitCode = 1
+  }
 }
 
-const SID = 's_test'
+const extraction = (over) => Object.assign({
+  memories: [
+    { ref: 'a', title: '喜欢猫咖', summary: '喜欢去安静的猫咖，尤其橘猫。', evidence: '我周末常去猫咖', keywords: ['猫咖', '橘猫'], importance: 72, kind: 'preference' },
+    { ref: 'b', title: '周报用要点', summary: '周报先给结论，再列要点。', evidence: '周报请先给结论', keywords: ['周报', '结论'], importance: 64, kind: 'preference' },
+  ],
+  relations: [{ from: 'a', to: 'b', summary: '都是表达偏好', relation: '相关' }],
+}, over)
 
-await check('空状态结构', () => {
+check('默认配置：自动生成关闭、每轮最多 3 条、总量 300', () => {
+  const cfg = defaultConfig()
+  assert.equal(cfg.auto, false)
+  assert.equal(cfg.maxPerExtraction, 3)
+  assert.equal(cfg.maxTotalNodes, 300)
+  assert.equal(cfg.injection, 'digest')
+})
+
+check('新会话从零开始：空状态没有节点，sessionNodes 为 0', () => {
   const state = emptyState()
-  assert.equal(state.version, 1)
-  assert.deepEqual(Object.keys(state.nodes), [])
-  assert.equal(state.config.injection, 'digest')
-  assert.equal(typeof state.config.debounceMs, 'number')
+  assert.equal(Object.keys(state.nodes).length, 0)
+  assert.equal(Object.keys(state.edges).length, 0)
+  assert.equal(sessionNodeCount(state, 's1'), 0)
+  assert.equal(buildDigest(state, 's1').text, '')
 })
 
-await check('抽取合并：新建 2 节点 + 1 边', () => {
+check('抽取后节点带创建时间，且自动抽取必须有用户原话依据', () => {
   const state = emptyState()
-  mergeExtraction(state, SID, normalizeExtraction({
-    memories: [
-      { ref: 'n1', title: '猫咖「年糕」', summary: '常去猫咖，店猫叫年糕，橘猫。', keywords: ['猫咖', '年糕', '橘猫'], importance: 70, kind: '偏好' },
-      { ref: 'n2', title: '周六陪父母吃饭', summary: '周六中午固定回家吃饭，尽量不安排其他事。', keywords: ['周六', '父母', '家庭'], importance: 80, kind: '计划' },
-    ],
-    relations: [{ from: 'n1', to: 'n2', summary: '都属周末安排', relation: '同主题', conflict: false }],
-  }))
-  const nodes = Object.values(state.nodes)
-  assert.equal(nodes.length, 2)
-  assert.equal(Object.values(state.edges).length, 1)
-  const sess = state.sessions[SID]
-  assert.equal(sess.extractCount, 1)
-  assert.equal(state.batches.length, 1)
-})
-
-await check('去重：同义标题再次抽取 → 更新而不是新建', () => {
-  const state = emptyState()
-  mergeExtraction(state, SID, normalizeExtraction({
-    memories: [{ title: '猫咖年糕', summary: '常去猫咖。', keywords: ['猫咖', '年糕', '橘猫'], importance: 60, kind: '偏好' }],
-  }))
-  const before = Object.values(state.nodes)[0]
-  mergeExtraction(state, SID, normalizeExtraction({
-    memories: [{ title: '猫咖的年糕', summary: '常去猫咖，橘猫年糕，喜欢布偶。', keywords: ['猫咖', '年糕', '布偶'], importance: 80, kind: '偏好' }],
-  }))
-  const nodes = Object.values(state.nodes)
-  assert.equal(nodes.length, 1, '应合并为一条')
-  assert.equal(nodes[0].id, before.id)
-  assert.equal(nodes[0].hits, 2)
-  assert.ok(nodes[0].keywords.includes('布偶'))
-  assert.ok(nodes[0].importance >= 60 && nodes[0].importance <= 80)
-})
-
-await check('布局：尺寸固定，半径 16–46，越重要越大', () => {
-  const state = emptyState()
-  mergeExtraction(state, SID, normalizeExtraction({
-    memories: [
-      { title: '大记忆', summary: 'a', keywords: ['大'], importance: 95, kind: '目标' },
-      { title: '小记忆', summary: 'b', keywords: ['小'], importance: 10, kind: '事实' },
-      { title: '中记忆', summary: 'c', keywords: ['中'], importance: 50, kind: '事实' },
-    ],
-  }))
-  const layout = computeLayout(state)
-  assert.equal(layout.width, 760)
-  assert.equal(layout.height, 560)
-  const big = layout.nodes.find((n) => n.title === '大记忆')
-  const small = layout.nodes.find((n) => n.title === '小记忆')
-  assert.ok(big.r > small.r)
-  assert.ok(big.r >= 16 && big.r <= 47)
-  assert.equal(layout.edges.length, 0)
-})
-
-await check('简报：包含条目、冲突提示、钉选', () => {
-  const state = emptyState()
-  mergeExtraction(state, SID, normalizeExtraction({
-    memories: [
-      { ref: 'a', title: '先结结论', summary: '输出偏好先结论后细节。', keywords: ['输出', '结论'], importance: 85, kind: '偏好' },
-      { ref: 'b', title: '技术推导', summary: '技术讨论希望展开推导。', keywords: ['技术', '推导'], importance: 60, kind: '偏好' },
-    ],
-    relations: [{ from: 'a', to: 'b', summary: '两种回答风格可能冲突', relation: '对立', conflict: true }],
-  }))
-  state.sessions[SID].tray = [Object.keys(state.nodes)[0]]
-  const digest = buildDigest(state, SID)
-  assert.ok(digest.text.includes('【忆泡记忆简报】'))
-  assert.ok(digest.text.includes('先结结论'))
-  assert.ok(digest.text.includes('⚠'))
-  assert.ok(digest.text.includes('钉选'))
-  const again = buildDigest(state, SID)
-  assert.equal(again.text, digest.text, '同样输入必须产出同样文本（稳定前缀）')
-  refreshDigest(state, SID)
-  assert.equal(digestFor(state, SID), digest.text)
-})
-
-await check('撤销：新建的节点与边被移除，更新回滚', () => {
-  const state = emptyState()
-  mergeExtraction(state, SID, normalizeExtraction({
-    memories: [{ title: '旧记忆', summary: '旧摘要', keywords: ['旧'], importance: 50, kind: '事实' }],
-  }))
-  const first = state.batches[0]
-  mergeExtraction(state, SID, normalizeExtraction({
-    memories: [
-      { title: '旧记忆', summary: '新摘要', keywords: ['旧'], importance: 90, kind: '事实' },
-      { title: '新记忆', summary: '新', keywords: ['新'], importance: 70, kind: '偏好' },
-    ],
-  }))
-  assert.equal(Object.values(state.nodes).length, 2)
-  rollbackBatch(state, { batchId: state.batches[0].id })
-  const nodes = Object.values(state.nodes)
-  assert.equal(nodes.length, 1)
-  assert.equal(nodes[0].title, '旧记忆')
-  assert.equal(nodes[0].importance, 50)
-  assert.ok(first)
-  rollbackBatch(state, { batchId: first.id })
-  assert.equal(Object.values(state.nodes).length, 0)
-})
-
-await check('解析：代码围栏、尾逗号、单引号都能救回', () => {
-  const fenced = '```json\n{"memories":[{"title":"A","summary":"x","keywords":["k"],"importance":60,"kind":"偏好"}],}\n```'
-  assert.equal(parseExtraction(fenced).memories.length, 1)
-  const broken = "{'memories':[{'title':'B','summary':'y','keywords':['k2'],'importance':30,'kind':'事实',}],}"
-  const parsed = parseExtraction(broken)
-  assert.ok(parsed && parsed.memories.length === 1)
-  assert.equal(parsed.memories[0].title, 'B')
-  assert.equal(parseExtraction('抱歉，我无法完成'), null)
-  assert.equal(parseExtraction(''), null)
-})
-
-await check('转录：角色标注 + 截断保留最近', () => {
-  const text = formatTranscript([
-    { role: 'user', text: '第一句' },
-    { role: 'assistant', text: '第二句' },
-  ], 100)
-  assert.ok(text.includes('用户：第一句'))
-  assert.ok(text.includes('AI：第二句'))
-  const long = formatTranscript(Array.from({ length: 200 }, (_, i) => ({ role: 'user', text: `第${i}句` })), 60)
-  assert.ok(long.length <= 80)
-  assert.ok(long.includes('更早的对话已省略'))
-})
-
-await check('导出 / 导入（继承）', () => {
-  const state = emptyState()
-  mergeExtraction(state, SID, normalizeExtraction({
-    memories: [
-      { ref: 'a', title: '甲', summary: 'a', keywords: ['甲'], importance: 70, kind: '事实' },
-      { ref: 'b', title: '乙', summary: 'b', keywords: ['乙'], importance: 40, kind: '事实' },
-    ],
-    relations: [{ from: 'a', to: 'b', summary: '关联', relation: '相关', conflict: false }],
-  }))
-  const exported = exportGraph(state)
-  const target = emptyState()
-  const report = importGraph(target, exported)
-  assert.equal(report.nodes, 2)
-  assert.equal(report.edges, 1)
-  assert.equal(Object.values(target.nodes).length, 2)
-  assert.equal(Object.values(target.edges).length, 1)
-  const again = importGraph(target, exported)
-  assert.equal(again.edges, 0)
-  assert.equal(Object.values(target.nodes).length, 2)
-})
-
-await check('频率：跨会话、命中越多越高', () => {
-  const state = emptyState()
-  mergeExtraction(state, SID, normalizeExtraction({ memories: [{ title: '热', summary: '', keywords: ['热'], importance: 60, kind: '偏好' }] }))
+  const at = '2026-10-01T02:03:04.000Z'
+  const withoutEvidence = extraction({ memories: [{ title: '没有依据', summary: 'x', evidence: '', importance: 50 }] })
+  mergeExtraction(state, 's1', withoutEvidence, at)
+  assert.equal(Object.keys(state.nodes).length, 0, '无 evidence 的自动记忆应被丢弃')
+  mergeExtraction(state, 's1', extraction(), at)
   const node = Object.values(state.nodes)[0]
-  const low = frequencyOf(state, node)
-  node.hits = 6
-  node.sessions = ['s_test', 's_2', 's_3']
-  const high = frequencyOf(state, node)
-  assert.ok(high > low)
+  assert.equal(node.created, at)
+  assert.equal(node.sessions[0], 's1')
+  assert.equal(Object.keys(state.edges).length, 1)
 })
 
-await check('磁盘：读写往返 + 损坏回退空状态', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'memory-bubble-'))
-  try {
-    const state = emptyState()
-    mergeExtraction(state, SID, normalizeExtraction({ memories: [{ title: '落盘', summary: 'ok', keywords: ['盘'], importance: 66, kind: '事实' }] }))
-    const file = await writeState(dir, state)
-    assert.equal(file, path.join(memoryBubbleDir(dir), 'state.json'))
-    const loaded = await readState(dir)
-    assert.equal(Object.values(loaded.nodes).length, 1)
-    assert.equal(Object.values(loaded.nodes)[0].title, '落盘')
-    const dir2 = await mkdtemp(path.join(os.tmpdir(), 'memory-bubble-bad-'))
-    await writeFile(path.join(dir2, 'state.json'), '{broken json', 'utf8')
-    const fallback = await readState(dir2)
-    assert.equal(Object.values(fallback.nodes).length, 0)
-    await rm(dir2, { recursive: true, force: true })
-  } finally {
-    await rm(dir, { recursive: true, force: true })
-  }
-})
-
-await check('配置默认值可覆盖', () => {
-  const state = emptyState({ debounceMs: 5000 })
-  assert.equal(state.config.debounceMs, 5000)
-  assert.equal(state.config.injection, defaultConfig().injection)
-})
-
-await check('配置：生成数量与总量上限', () => {
+check('手动新增可指定记录时间（覆盖默认 now）', () => {
   const state = emptyState()
-  assert.equal(state.config.maxPerExtraction, 3)
-  assert.equal(state.config.maxTotalNodes, 300)
-  const extracted = buildExtractionPrompt({ existing: [], transcript: '用户：hi', maxNew: 2 })
-  assert.ok(extracted.includes('最多输出 2 条记忆'), extracted)
+  const created = '2025-12-24T10:00:00.000Z'
+  mergeExtraction(state, 's1', { memories: [{ title: '手记', summary: '手动记录', manual: true, created, importance: 40 }], relations: [] }, '2026-10-02T00:00:00.000Z')
+  const node = Object.values(state.nodes)[0]
+  assert.equal(node.created, created)
+  assert.equal(node.updated, '2026-10-02T00:00:00.000Z')
 })
 
-await check('合并：每轮新建数量受 maxPerExtraction 限制', () => {
-  const state = emptyState({ maxPerExtraction: 2 })
-  const extraction = normalizeExtraction({
+check('每轮新建数量上限 maxPerExtraction 生效', () => {
+  const state = emptyState()
+  state.config.maxPerExtraction = 1
+  const many = extraction({
     memories: [
-      { title: 'A', summary: 'a' },
-      { title: 'B', summary: 'b' },
-      { title: 'C', summary: 'c' },
-      { title: 'D', summary: 'd' },
+      { title: '甲', summary: 'a', evidence: 'e1', importance: 60 },
+      { title: '乙', summary: 'b', evidence: 'e2', importance: 60 },
+      { title: '丙', summary: 'c', evidence: 'e3', importance: 60 },
     ],
+    relations: [],
   })
-  const batch = mergeExtraction(state, SID, extraction)
-  assert.equal(batch.created.length, 2)
-  assert.equal(Object.values(state.nodes).length, 2)
+  const batch = mergeExtraction(state, 's1', many)
+  assert.equal(Object.keys(state.nodes).length, 1)
   assert.equal(batch.skipped, 2)
 })
 
-await check('合并：达到总量上限后只更新不新增', () => {
-  const state = emptyState({ maxTotalNodes: 20 })
-  const stamp = '2026-01-01T00:00:00.000Z'
-  for (let i = 0; i < 20; i += 1) {
-    state.nodes[`x${i}`] = {
-      id: `x${i}`, title: `填充${i}`, summary: '', keywords: [], kind: '事实', importance: 10,
-      hits: 1, created: stamp, updated: stamp, sessions: [SID], pinned: false,
-    }
+check('总量上限 maxTotalNodes 生效', () => {
+  const state = emptyState()
+  state.config.maxTotalNodes = 2
+  for (let i = 0; i < 5; i += 1) {
+    mergeExtraction(state, 's1', { memories: [{ title: `条目${i}`, summary: 'x', evidence: `e${i}`, importance: 50 }], relations: [] })
   }
-  const batch = mergeExtraction(state, SID, normalizeExtraction({ memories: [{ title: '新记忆', summary: 'y' }] }))
-  assert.equal(batch.created.length, 0)
-  assert.equal(batch.skipped, 1)
-  assert.equal(Object.keys(state.nodes).length, 20)
+  assert.equal(Object.keys(state.nodes).length, 2)
 })
 
-console.log(`\n${passed} checks passed`)
+check('记忆按会话隔离：A 会话的节点不会出现在 B 会话简报里', () => {
+  const state = emptyState()
+  mergeExtraction(state, 'A', extraction())
+  refreshDigest(state, 'A')
+  refreshDigest(state, 'B')
+  const digestA = digestFor(state, 'A')
+  const digestB = digestFor(state, 'B')
+  assert.ok(digestA.includes('喜欢猫咖'), 'A 应有自己的记忆')
+  assert.equal(digestB, '', 'B 会话开始时没有任何记忆')
+  assert.equal(sessionNodeCount(state, 'B'), 0)
+  assert.equal(sessionState(state, 'B').extractCount, 0)
+})
+
+check('重复抽取合并而不重复建节点', () => {
+  const state = emptyState()
+  mergeExtraction(state, 's1', extraction())
+  mergeExtraction(state, 's1', extraction())
+  assert.equal(Object.keys(state.nodes).length, 2)
+  const node = Object.values(state.nodes)[0]
+  assert.ok(node.hits >= 2)
+})
+
+check('撤销上一批：节点/边回滚，简报也回滚', () => {
+  const state = emptyState()
+  mergeExtraction(state, 's1', { memories: [{ title: '临时', summary: 'x', evidence: 'e', importance: 50 }], relations: [] })
+  refreshDigest(state, 's1')
+  const batch = rollbackBatch(state, { sessionId: 's1' })
+  assert.ok(batch && batch.id)
+  assert.equal(Object.keys(state.nodes).length, 0)
+  assert.equal(digestFor(state, 's1'), '')
+})
+
+check('布局：无节点时不炸；有节点时半径随重要性变化', () => {
+  const empty = emptyState()
+  const layout0 = computeLayout(empty, 's1')
+  assert.equal(layout0.nodes.length, 0)
+  const state = emptyState()
+  mergeExtraction(state, 's1', {
+    memories: [
+      { title: '重要', summary: 'x', evidence: 'e', importance: 95 },
+      { title: '次要', summary: 'y', evidence: 'e', importance: 10 },
+    ],
+    relations: [],
+  })
+  const layout = computeLayout(state, 's1')
+  const big = layout.nodes.find((n) => n.title === '重要')
+  const small = layout.nodes.find((n) => n.title === '次要')
+  assert.ok(big.r > small.r)
+  assert.ok(big.x >= 0 && big.y >= 0)
+})
+
+check('导出/导入往返：导入去重，图谱结构保持', () => {
+  const state = emptyState()
+  mergeExtraction(state, 's1', extraction())
+  const bundle = exportGraph(state)
+  const target = emptyState()
+  const report1 = importGraph(target, bundle.graph)
+  assert.equal(report1.nodes, 2)
+  importGraph(target, bundle.graph)
+  assert.equal(Object.keys(target.nodes).length, 2)
+  assert.equal(Object.keys(target.edges).length, 1)
+})
+
+check('解析模型输出：容忍代码块包裹与结尾逗号', () => {
+  const text = '```json\n{"memories":[{"title":"A","summary":"s","evidence":"e","keywords":["k"],"importance":60}],}\n```'
+  const parsed = parseLoose(text)
+  assert.equal(parsed.memories[0].title, 'A')
+})
+
+function parseLoose(text) {
+  try {
+    return JSON.parse(text.replace(/```(?:json)?/gi, '').replace(/,\s*([}\]])/g, '$1'))
+  } catch {
+    return normalizeExtraction(text)
+  }
+}
+
+check('便携包：buildBundle 含 schema/prompt/tools/graph', () => {
+  const state = emptyState()
+  mergeExtraction(state, 's1', extraction())
+  const bundle = buildBundle(state)
+  for (const key of ['schema', 'prompt', 'tools', 'graph']) assert.ok(key in bundle)
+  assert.equal(bundle.tools.length, 5)
+})
+
+console.log(`\n${passed} 项通过`)

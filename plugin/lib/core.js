@@ -4,23 +4,30 @@
  * 职责：状态模型、抽取结果合并、去重、布局、简报、撤销、导入导出。
  * 所有函数都只操作传入的普通对象，不碰文件、不碰网络、不碰 ctx。
  *
- * 数据模型（v1，与 schema/memory-bubble-v1.schema.json 对齐）：
+ * 数据模型（v2，与 schema/memory-bubble-v1.schema.json 对齐）：
  *   state = {
- *     version, createdAt, updatedAt,
- *     nodes:   { [id]: Node },
+ *     version, createdAt, updatedAt, firstRunAt,
+ *     nodes:   { [id]: Node },      // 每条记忆带 sessions[]：只属于产生它的那些会话
  *     edges:   { [id]: Edge },
  *     sessions:{ [sid]: SessionState },
  *     batches: [ Batch ],            // 最近 40 条抽取批次，用于撤销
  *     config:  Config,
  *   }
+ *
+ * 设计底线：记忆是「按会话」的。注入、检索、简报都只看本会话的节点，
+ * 绝不把 A 会话的记忆喂给 B 会话——这是「从零开始、不产生开局幻觉」的根。
  */
 
-export const STATE_VERSION = 1
+export const STATE_VERSION = 2
 
 export function defaultConfig() {
   return {
-    /** 读取对话并自动生成记忆的总开关（可在面板里逐会话覆盖） */
-    auto: true,
+    /**
+     * 读取对话并自动生成记忆的总开关。
+     * 默认 false：装好之后忆泡是空的、安静的，用户点「开启读取对话」才开始记——
+     * 从零开始，避免一装上就翻旧对话、凭空「记得」。
+     */
+    auto: false,
     /** 每轮总结最多生成几条新记忆（update 不计入） */
     maxPerExtraction: 3,
     /** 记忆总量上限，达到后只允许更新/合并，不再新增 */
@@ -46,12 +53,46 @@ export function emptyState(config) {
     version: STATE_VERSION,
     createdAt: now,
     updatedAt: now,
+    firstRunAt: now,
     nodes: {},
     edges: {},
     sessions: {},
     batches: [],
     config: { ...defaultConfig(), ...(config || {}) },
   }
+}
+
+/**
+ * 把旧版本/陌生形状的状态迁移到当前版本。
+ * 返回 { state, migrated }，调用方可据此决定是否落盘。
+ */
+export function migrateState(raw) {
+  const fallback = emptyState()
+  if (!raw || typeof raw !== 'object') return { state: fallback, migrated: true }
+  const state = {
+    ...fallback,
+    ...raw,
+    nodes: raw.nodes && typeof raw.nodes === 'object' ? raw.nodes : {},
+    edges: raw.edges && typeof raw.edges === 'object' ? raw.edges : {},
+    sessions: raw.sessions && typeof raw.sessions === 'object' ? raw.sessions : {},
+    batches: Array.isArray(raw.batches) ? raw.batches : [],
+    config: { ...defaultConfig(), ...(raw.config || {}) },
+  }
+  let migrated = !raw.sessions || !raw.firstRunAt || raw.version !== STATE_VERSION
+  // v1 的节点可能没有 sessions：老数据只当作「存档」，不参与任何会话的注入
+  for (const node of Object.values(state.nodes)) {
+    if (!Array.isArray(node.sessions)) {
+      node.sessions = []
+      migrated = true
+    }
+    if (typeof node.evidence !== 'string') {
+      node.evidence = ''
+      migrated = true
+    }
+  }
+  state.version = STATE_VERSION
+  if (!state.firstRunAt) state.firstRunAt = state.createdAt || new Date().toISOString()
+  return { state, migrated }
 }
 
 /** 会话状态惰性创建 */
@@ -205,6 +246,7 @@ export function computeLayout(state) {
       id: node.id,
       title: node.title,
       summary: node.summary || '',
+      evidence: node.evidence || '',
       kind: node.kind || '事实',
       tone: node.tone || 'peach',
       keywords: Array.isArray(node.keywords) ? node.keywords.slice(0, 6) : [],
@@ -302,12 +344,16 @@ export function mergeExtraction(state, sessionId, extraction, now = nowIso()) {
     const cand = {
       title: truncate(String(raw && raw.title ? raw.title : '').trim(), 40),
       summary: truncate(String(raw && raw.summary ? raw.summary : '').trim(), 600),
+      evidence: truncate(String(raw && raw.evidence ? raw.evidence : '').trim(), 120),
       keywords: sanitizeKeywords(raw && raw.keywords),
       importance: clamp(Number(raw && raw.importance) || 50, 0, 100),
       kind: sanitizeKind(raw && raw.kind),
       tone: ['peach', 'apricot', 'butter', 'rose', 'cream'][index % 5],
+      created: raw && typeof raw.created === 'string' && !Number.isNaN(Date.parse(raw.created)) ? new Date(raw.created).toISOString() : now,
     }
     if (!cand.title) return
+    // 自动抽取必须带用户原话依据；手工新增（raw.manual）可以没有
+    if (!cand.evidence && !(raw && raw.manual === true)) return
     let node = raw && raw.id && state.nodes[raw.id] ? state.nodes[raw.id] : null
     if (!node) node = findExisting(state, cand)
     const isUpdate = Boolean(node)
@@ -319,9 +365,10 @@ export function mergeExtraction(state, sessionId, extraction, now = nowIso()) {
       createdCount += 1
     }
     if (isUpdate) {
-      batch.updated.push({ id: node.id, prev: { title: node.title, summary: node.summary, keywords: node.keywords.slice(), importance: node.importance } })
+      batch.updated.push({ id: node.id, prev: { title: node.title, summary: node.summary, keywords: node.keywords.slice(), importance: node.importance, evidence: node.evidence || '' } })
       node.title = cand.title || node.title
       if (cand.summary) node.summary = cand.summary
+      if (cand.evidence) node.evidence = cand.evidence
       node.keywords = Array.from(new Set([...(node.keywords || []), ...cand.keywords])).slice(0, 6)
       node.importance = Math.round((node.importance * 0.7 + cand.importance * 0.3))
       node.hits = (node.hits || 1) + 1
@@ -332,12 +379,13 @@ export function mergeExtraction(state, sessionId, extraction, now = nowIso()) {
         id: uniqueId(state, 'n'),
         title: cand.title,
         summary: cand.summary,
+        evidence: cand.evidence,
         keywords: cand.keywords,
         importance: Math.round(cand.importance),
         hits: 1,
         kind: cand.kind,
         tone: cand.tone,
-        created: now,
+        created: cand.created,
         updated: now,
         sessions: [sessionId],
         source: { sessionId, at: now },
@@ -414,6 +462,7 @@ export function rollbackBatch(state, scope) {
     if (!node) continue
     node.title = item.prev.title
     node.summary = item.prev.summary
+    node.evidence = item.prev.evidence || ''
     node.keywords = item.prev.keywords
     node.importance = item.prev.importance
   }
@@ -430,30 +479,37 @@ export function rollbackBatch(state, scope) {
 /* ------------------------------------------------------------------ 简报与注入 */
 
 /**
- * 稳定简报：按「与当前会话相关度 + 重要性」挑几条最重要记忆，输出固定格式文本。
+ * 稳定简报：只取「本会话」的记忆，按重要性挑几条，输出固定格式文本。
  * 同样的记忆在同样的会话里产出同样的文本（稳定前缀，利于 KV 缓存）。
+ * 若本会话还没有记忆，返回空文本 —— 空忆泡不注入任何东西。
  */
 export function buildDigest(state, sessionId, limit) {
   const cfg = state.config || defaultConfig()
   const max = limit || cfg.digestLimit || 12
-  const sess = state.sessions[sessionId]
-  const nodes = Object.values(state.nodes)
-  const score = (node) => {
-    const related = sess && Array.isArray(node.sessions) && node.sessions.includes(sessionId) ? 1 : 0
-    return related * 110 + (node.importance || 50) + (node.hits || 1) * 6
-  }
+  const sess = sessionId ? state.sessions[sessionId] : null
+  const inSession = (node) => Boolean(sessionId && Array.isArray(node.sessions) && node.sessions.includes(sessionId))
+  const nodes = Object.values(state.nodes).filter(inSession)
+  const score = (node) => (node.importance || 50) + (node.hits || 1) * 6 + (node.pinned ? 40 : 0)
   const ranked = nodes.slice().sort((a, b) => score(b) - score(a))
   const picked = ranked.slice(0, max)
   const tray = sess ? sess.tray || [] : []
-  const trayNodes = tray.map((id) => state.nodes[id]).filter(Boolean)
-  const conflictEdges = Object.values(state.edges).filter((edge) => edge.conflict === true)
+  const trayNodes = tray.map((id) => state.nodes[id]).filter((node) => node && inSession(node))
+  const conflictEdges = Object.values(state.edges).filter((edge) => {
+    if (edge.conflict !== true) return false
+    const a = state.nodes[edge.from]
+    const b = state.nodes[edge.to]
+    return a && b && inSession(a) && inSession(b)
+  })
+  if (!picked.length && !trayNodes.length) {
+    return { text: '', nodeIds: [] }
+  }
   const lines = []
   lines.push('【忆泡记忆简报】')
-  lines.push('以下是从以往对话里沉淀的记忆。与当前问题相关的才采用；若与本轮用户明确说法冲突，以用户最新说法为准。')
+  lines.push('这些是本次对话里用户此前表达过的信息，只在与当前问题相关时使用；不要复述这份简报，也不要假装记得未列出的内容。若与本轮用户明确说法冲突，以用户最新说法为准。')
   if (picked.length === 0) {
-    lines.push('（还没有沉淀记忆，这是早期对话。）')
+    lines.push('（本会话还没有沉淀记忆，这是早期对话。）')
   } else {
-    lines.push('长期记忆：')
+    lines.push('本会话记忆：')
     picked.forEach((node, i) => {
       const kw = Array.isArray(node.keywords) && node.keywords.length ? `（关键词：${node.keywords.join(' / ')}）` : ''
       lines.push(`${i + 1}. [${node.kind || '事实'}] ${node.title}：${truncate(node.summary || '', 140)}${kw}`)
@@ -477,20 +533,28 @@ export function buildDigest(state, sessionId, limit) {
   }
 }
 
-/** 每步调用前动态取最新简报（不落盘，纯函数） */
+/** 本会话的节点数量（用于空状态判断与健康检查） */
+export function sessionNodeCount(state, sessionId) {
+  if (!sessionId) return 0
+  return Object.values(state.nodes).filter((node) => Array.isArray(node.sessions) && node.sessions.includes(sessionId)).length
+}
+
+/**
+ * 每步调用前动态取最新简报（不落盘，纯函数）。
+ * 直接按当前状态现算：同一份记忆 → 同一份文本（稳定前缀），
+ * 也避免沿用旧版本落盘的、可能混入其他会话记忆的简报。
+ */
 export function digestFor(state, sessionId) {
   const cfg = state.config || defaultConfig()
-  if (cfg.injection === 'off') return ''
+  if (cfg.injection === 'off' || !sessionId) return ''
   const sess = state.sessions[sessionId]
   if (cfg.injection === 'tray') {
     const tray = (sess && sess.tray) || []
-    const nodes = tray.map((id) => state.nodes[id]).filter(Boolean)
+    const nodes = tray.map((id) => state.nodes[id]).filter((node) => node && Array.isArray(node.sessions) && node.sessions.includes(sessionId))
     if (!nodes.length) return ''
     return ['【忆泡 · 用户钉选记忆】', ...nodes.map((n) => `- ${n.title}：${truncate(n.summary || '', 120)}`)].join('\n')
   }
-  if (sess && sess.digest && sess.digest.text) return sess.digest.text
-  const built = buildDigest(state, sessionId)
-  return built.text
+  return buildDigest(state, sessionId).text
 }
 
 export function refreshDigest(state, sessionId) {
@@ -504,15 +568,19 @@ export function refreshDigest(state, sessionId) {
 /* ------------------------------------------------------------------ 提示词 */
 
 export const EXTRACTION_SYSTEM = [
-  '你是「忆泡」记忆整理器。你的任务是从一段 AI 与用户的日常对话里，提炼值得长期记住的信息，画成一张记忆网。',
+  '你是「忆泡」记忆整理器。你的任务是从一段 AI 与用户的日常对话里，提炼**用户自己说过、值得在本次对话后续记住**的信息，画成一张记忆网。',
   '只输出 JSON，不要解释、不要 Markdown 代码围栏。JSON 形状：',
-  '{"memories":[{"ref":"n1","title":"≤12字","summary":"1-2句，保留关键细节","keywords":["2-5个短词"],"importance":0到100的整数,"kind":"偏好|事实|计划|关系|目标|情绪|禁忌"}],"relations":[{"from":"n1","to":"n2","summary":"两者关系的说明","relation":"因果|印证|同主题|对立|相关","conflict":false}]}',
-  '规则：',
-  '1. 只记「以后还有用」的信息：长期偏好、身份事实、正在推进的计划、目标、重要关系、情绪模式、禁忌。不要记录寒暄、一次性操作、模型自己的推理。',
-  '2. 每条记忆必须能脱离对话独立看懂，不要用「这个/那个/上面说的」指代。',
-  '3. 与「已有记忆」语义重复时用 {"op":"update","id":"已有id"} 并给出更新后的 title/summary；新信息才 create。',
-  '4. relations 只在两条记忆确实有解释关系时给出，宁缺毋滥；互相矛盾的内容标 "conflict": true。',
-  '5. importance：会影响长期行为/身份/关系的 70-95；一般偏好 40-70；一次性背景 20-40。',
+  '{"memories":[{"ref":"n1","title":"≤12字","summary":"1-2句，保留关键细节","evidence":"≤60字，用户本人的原话片段","keywords":["2-5个短词"],"importance":0到100的整数,"kind":"偏好|事实|计划|关系|目标|情绪|禁忌"}],"relations":[{"from":"n1","to":"n2","summary":"两者关系说明","relation":"因果|印证|同主题|对立|相关","conflict":false}]}',
+  '铁律（违反任何一条宁可返回空结果）：',
+  '1. 只从「用户」说的话里抽取。AI 自己的建议、方案、推理、总结都不算用户的记忆。',
+  '2. 每条记忆都必须带 evidence：从用户原话里摘出的 ≤60 字片段。找不到用户原话依据的，不要输出这一条。',
+  '3. 不要推断、不要补常识、不要把“用户可能喜欢”写成事实。用户说“我喜欢猫”可以记；用户只贴了一张猫图不算。',
+  '4. 不记录寒暄、一次性操作、工具调用结果、环境信息、系统提示、模型推理。',
+  '5. 每条记忆必须能脱离对话独立看懂，不要用「这个/那个/上面说的」指代；summary 只写用户表达的内容。',
+  '6. 与「已有记忆」语义重复时用 {"op":"update","id":"已有id"} 并给出更新后的 title/summary/evidence；只有新信息才 create。',
+  '7. relations 只在两条记忆确实有解释关系时给出，宁缺毋滥；互相矛盾的内容标 "conflict": true。',
+  '8. importance：会影响长期行为/身份/关系的 70-95；一般偏好 40-70；一次性背景 20-40。',
+  '9. 若本段对话没有值得记住的用户信息，返回 {"memories":[],"relations":[]}。空结果是被允许的、也是常见的。',
 ].join('\n')
 
 export function buildExtractionPrompt({ existing, transcript, sessionNote, maxNew }) {
@@ -526,13 +594,14 @@ export function buildExtractionPrompt({ existing, transcript, sessionNote, maxNe
   }
   cfgLines.push('')
   if (sessionNote) {
-    cfgLines.push(`本会话此前累积的摘要（供衔接）：${truncate(sessionNote, 400)}`)
+    cfgLines.push(`本会话此前累积的摘要（供衔接，不要当作新信息）：${truncate(sessionNote, 400)}`)
     cfgLines.push('')
   }
-  cfgLines.push('本轮新增对话（只从这里抽取新信息；已有记忆只是参照）：')
+  cfgLines.push('本轮新增对话（只从这里、且只从“用户：”后面的内容抽取）：')
   cfgLines.push(transcript)
   cfgLines.push('')
   cfgLines.push(`数量限制：本轮最多输出 ${limit} 条记忆（"create" 计入上限，"update" 不计入）；信息太多时只保留最重要的。`)
+  cfgLines.push('再次强调：没有用户原话依据就不要输出；没有可记的就输出 {"memories":[],"relations":[]}。')
   cfgLines.push('')
   cfgLines.push('请输出 JSON：')
   return cfgLines.join('\n')
@@ -574,9 +643,11 @@ export function normalizeExtraction(parsed) {
         id: typeof m.id === 'string' && m.id ? m.id : undefined,
         title: String(m.title || '').slice(0, 40),
         summary: String(m.summary || '').slice(0, 600),
+        evidence: String(m.evidence || '').slice(0, 120),
         keywords: Array.isArray(m.keywords) ? m.keywords.map((k) => String(k).slice(0, 16)) : [],
         importance: clamp(Number(m.importance) || 50, 0, 100),
         kind: sanitizeKind(m.kind),
+        manual: m.manual === true,
       })),
     relations: relations
       .filter((r) => r && typeof r === 'object' && (r.from || r.to))
@@ -605,6 +676,7 @@ export function exportGraph(state) {
         id: node.id,
         title: node.title,
         summary: node.summary,
+        evidence: node.evidence || '',
         keywords: node.keywords,
         importance: node.importance,
         hits: node.hits,
@@ -641,7 +713,7 @@ export function importGraph(state, input) {
       node.importance = Math.max(node.importance || 0, Number(raw.importance) || 0)
       if (!node.summary && raw.summary) node.summary = raw.summary
     } else {
-      node = { id: uniqueId(state, 'n'), title: raw.title, summary: raw.summary || '', keywords: sanitizeKeywords(raw.keywords), importance: clamp(Number(raw.importance) || 50, 0, 100), hits: Number(raw.hits) || 1, kind: sanitizeKind(raw.kind), tone: raw.tone || 'peach', created: raw.created || nowIso(), updated: raw.updated || nowIso(), sessions: Array.isArray(raw.sessions) ? raw.sessions.slice(0, 40) : [], pinned: false }
+      node = { id: uniqueId(state, 'n'), title: raw.title, summary: raw.summary || '', evidence: truncate(String(raw.evidence || ''), 120), keywords: sanitizeKeywords(raw.keywords), importance: clamp(Number(raw.importance) || 50, 0, 100), hits: Number(raw.hits) || 1, kind: sanitizeKind(raw.kind), tone: raw.tone || 'peach', created: raw.created || nowIso(), updated: raw.updated || nowIso(), sessions: Array.isArray(raw.sessions) ? raw.sessions.slice(0, 40) : [], pinned: false }
       state.nodes[node.id] = node
     }
     if (raw.id) idMap.set(raw.id, node.id)

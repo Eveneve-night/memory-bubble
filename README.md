@@ -23,7 +23,7 @@
 
 ### 2. 在 DeepSeek Harness 里使用（插件）
 
-**先下载**：[插件包 v0.2.1](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.2.1/dsh-memory-bubble-v0.2.1.zip)（解压即得 `dsh-memory-bubble/` 目录）
+**先下载**：[插件包 v0.3.1](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.3.1/dsh-memory-bubble-v0.3.1.zip)（解压即得 `dsh-memory-bubble/` 目录）
 
 #### 方式 A：本地安装（当前版本）
 
@@ -45,7 +45,7 @@ pnpm add "file:<path-to-clone>/plugin"
   name: dsh-memory-bubble
 ```
 
-刷新 Web GUI 后，左栏出现「忆泡」图标即安装成功。
+刷新 Web GUI 后，**侧栏出现「忆泡」图标**即安装成功。忆泡默认关闭，点侧栏图标打开小窗口；窗口可拖动、可缩放，窗口内 × 关闭。首次安装是空图、不读对话，开启「读取对话并自动生成」后才按会话积攒记忆。
 
 #### 方式 B：复制进 `node_modules`
 
@@ -53,7 +53,7 @@ pnpm add "file:<path-to-clone>/plugin"
 
 > npm 包发布后会补上 `plugin_manager install_bundle` 的一行安装方式（bundle 自带 `cordis.patch.yml`，不需要手改 loader）。
 
-安装后的入口：**左栏「忆泡」图标**（整幅记忆图）、**输入框左侧药丸**（当前会话记忆数）、**设置页「忆泡」分区**（读取对话并自动生成开关、每轮最多生成条数、记忆总量上限、去抖间隔、注入方式、导入导出）。
+安装后的入口：**侧栏「忆泡」图标**（打开可拖动/缩放的小窗口）、**设置页「忆泡」分区**（读取对话并自动生成开关、每轮最多生成条数、记忆总量上限、去抖间隔、注入方式、导入导出）。
 
 ### 3. 其他 AI 也要用？走互操作层（v0.2）
 
@@ -110,9 +110,11 @@ assets/    README 截图
 
 - ✅ v0.1：宿主半 + 客户端半完成，本地自检 core 12/12、host 13/13、client 3/3
 - ✅ v0.2：跨 AI 互操作层（MCP / CLI / HTTP / 记忆包），自检 interop 5/5；导出格式对齐 JSON Schema
-- ✅ v0.2.1：自动生成可控——读取对话总开关、每轮最多生成条数、记忆总量上限；「＋ 手动记一条」仅手动编辑；当前自检 core 15/15（新增生成数量/总量上限用例）
-- ⏳ 真机安装验证（下一个对话）：`llm.stream` 调用形状、`agent.ctx.systemPrompt` 可见性、主题 token 接入
-- 🔜 发布 npm 包（一行安装）→ 更多宿主适配（Web / 移动端）→ 记忆自动归档与「遗忘曲线」
+- ✅ v0.2.1：自动生成可控——读取对话总开关、每轮最多生成条数、记忆总量上限；「＋ 手动记一条」仅手动编辑
+- ✅ v0.2.2：按会话归属（新装从零开始）、默认不读对话、防开局幻觉、一键清空本会话；已真机安装验证
+- ✅ v0.3.0：浮窗化——侧栏图标打开可拖动/缩放的小窗口、窗口内关闭、默认关闭；移除 main 面板与输入框药丸，避免接管界面
+- ✅ v0.3.1：修复工具注册 schema（5 个工具改为顶层 `type: 'object'` + `properties` + `required` 的标准 JSON Schema，修掉模型侧 `parameters` 校验报错）；自检 core 13/13、plugin 14/14
+- ⏳ 下一步：把 v0.3.1 真机懒加载验证清单和截图补进 README；记忆自动归档与「遗忘曲线」
 
 已知取舍：记忆抽取是**摘要式**的，不做向量检索（图 + 简报足够小，先把「看得见」做对）；冲突检测是启发式，需要人确认。
 

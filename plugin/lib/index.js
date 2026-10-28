@@ -17,7 +17,9 @@
 
 import {
   emptyState,
+  migrateState,
   sessionState,
+  sessionNodeCount,
   mergeExtraction,
   computeLayout,
   buildDigest,
@@ -72,7 +74,16 @@ export function apply(ctx) {
   async function init() {
     try {
       profileDir = await resolveProfileDir()
-      state = await readState(profileDir)
+      const loaded = await readState(profileDir)
+      const migrated = migrateState(loaded)
+      state = migrated.state
+      if (migrated.migrated) await writeState(profileDir, state)
+      const total = Object.keys(state.nodes).length
+      if (total === 0) {
+        console.info('[memory-bubble] 空忆泡已就绪（从零开始）：默认不读取对话，等待用户在面板里开启。')
+      } else {
+        console.info(`[memory-bubble] ready: ${total} 条记忆 / ${Object.keys(state.sessions).length} 个会话，状态文件 ${statePath(profileDir)}`)
+      }
     } catch (error) {
       console.error('[memory-bubble] load state failed:', error && error.message ? error.message : error)
     }
@@ -114,8 +125,7 @@ export function apply(ctx) {
       const sourceKind = data && data.source && data.source.kind
       if (sourceKind !== 'user') return
       const text = contentText(data && data.content)
-      if (!text) return
-      if (text.includes('【忆泡记忆简报】') || text.includes('【忆泡 · ')) return
+      if (!text || isMetaText(text)) return
       pushBuffer(sessionId, { role: 'user', text, at: event.at || nowIso() })
       return
     }
@@ -153,6 +163,23 @@ export function apply(ctx) {
     return parts.join('\n').trim()
   }
 
+  /** 系统注入/运行时上下文不是用户说的话，不能进记忆 */
+  function isMetaText(text) {
+    if (!text) return true
+    if (text.includes('【忆泡记忆简报】') || text.includes('【忆泡 · ')) return true
+    const head = text.slice(0, 220)
+    return (
+      /^Current runtime context/i.test(head) ||
+      /^Time sampled/i.test(head) ||
+      /^A skill is a reusable/i.test(head) ||
+      /<available_skills>/.test(head) ||
+      /<system-reminder>/.test(head) ||
+      /^(系统|系统提示|System:)/i.test(head) ||
+      head.includes('Approval prompts are disabled') ||
+      head.includes('The approval policy changed')
+    )
+  }
+
   function pushBuffer(sessionId, entry) {
     const list = buffers.get(sessionId) || []
     list.push(entry)
@@ -188,6 +215,11 @@ export function apply(ctx) {
     if (fresh.filter((m) => m.role === 'user').length === 0 && fresh.length < 4) {
       transcriptMessages = await backfillTranscript(sessionId)
     }
+    // 没有任何「用户本人」说过的话，就不总结——这是防开局幻觉的第一道闸
+    const userLines = transcriptMessages.filter((m) => m.role === 'user')
+    if (userLines.length === 0) {
+      return { ok: false, error: '还没有用户说过的内容，先聊几句再总结' }
+    }
     const transcript = formatTranscript(transcriptMessages, state.config.maxTranscriptChars)
     if (!transcript || transcript.replace(/[^\u4e00-\u9fffA-Za-z0-9]/g, '').length < 12) {
       return { ok: false, error: 'not enough conversation yet' }
@@ -197,7 +229,7 @@ export function apply(ctx) {
     sess.pending = true
     try {
       const prompt = buildExtractionPrompt({
-        existing: existingForPrompt(),
+        existing: existingForPrompt(sessionId),
         transcript,
         sessionNote: sess.digest && sess.digest.text ? sess.digest.text.replace(/【忆泡记忆简报】[^\n]*\n?/, '') : '',
         maxNew: state.config.maxPerExtraction,
@@ -220,9 +252,11 @@ export function apply(ctx) {
     }
   }
 
-  function existingForPrompt() {
+  /** 只把「本会话已有记忆」给模型去重，避免跨会话串味 */
+  function existingForPrompt(sessionId) {
     const max = state.config.maxExistingInPrompt || 40
     return Object.values(state.nodes)
+      .filter((node) => Array.isArray(node.sessions) && node.sessions.includes(sessionId))
       .slice()
       .sort((a, b) => (b.importance || 0) - (a.importance || 0))
       .slice(0, max)
@@ -243,7 +277,7 @@ export function apply(ctx) {
         if (!event || !event.type || !event.data) continue
         if (event.type === 'user/message' && event.data.source && event.data.source.kind === 'user') {
           const text = contentText(event.data.content)
-          if (text) out.push({ role: 'user', text })
+          if (text && !isMetaText(text)) out.push({ role: 'user', text })
         } else if (event.type === 'assistant/message' && event.data.message) {
           const text = contentText(event.data.message.content)
           if (text) out.push({ role: 'assistant', text })
@@ -317,6 +351,13 @@ export function apply(ctx) {
 
   /* ------------------------------------------------------------ 每步前注入简报 */
 
+  function injectionFor(sessionId) {
+    if (!sessionId) return ''
+    const sess = state.sessions[sessionId]
+    if (sess && sess.enabled === false) return ''
+    return digestFor(state, sessionId)
+  }
+
   ctx.on('agent/created', ({ agent }) => {
     if (disposed || !agent || typeof agent.id !== 'string') return
     try {
@@ -326,10 +367,7 @@ export function apply(ctx) {
         const dispose = prompt.section({
           name: 'memory-bubble',
           order: 45,
-          text: () => {
-            const digest = digestFor(state, agent.id)
-            return digest ? digest : ''
-          },
+          text: () => injectionFor(agent.id),
         })
         sectioned.add(agent.id)
         if (typeof agentCtx.effect === 'function') agentCtx.effect(() => () => {
@@ -349,7 +387,7 @@ export function apply(ctx) {
       const sessionId = payload && payload.agent && payload.agent.id
       if (!sessionId || sectioned.has(sessionId)) return decision
       if (state.config.injection === 'off') return decision
-      const digest = digestFor(state, sessionId)
+      const digest = injectionFor(sessionId)
       if (!digest) return decision
       const messages = Array.isArray(decision.messages) ? decision.messages : payload.messages
       if (!Array.isArray(messages)) return decision
@@ -420,7 +458,23 @@ export function apply(ctx) {
 
   route('/health', async (req, res) => {
     await ready
-    html(res).send(200, { ok: true, name, version: 1, profileDir, stats: stats() })
+    const url = new URL(req.url || '/', 'http://dsh.local')
+    const sessionId = url.searchParams.get('sessionId') || null
+    const total = Object.keys(state.nodes).length
+    return html(res).send(200, {
+      ok: true,
+      name,
+      version: 1,
+      stateVersion: state.version,
+      firstRun: total === 0,
+      auto: state.config.auto === true,
+      stateFile: profileDir ? statePath(profileDir) : null,
+      totalNodes: total,
+      sessionNodes: sessionId ? sessionNodeCount(state, sessionId) : 0,
+      sessions: Object.keys(state.sessions).length,
+      digestActive: sessionId ? digestFor(state, sessionId) !== '' : false,
+      stats: stats(),
+    })
   })
 
   /* ---- 跨 AI 互操作：其他 AI 可下载 bundle、读取 manifest、按同一份 schema 继承记忆 ---- */
@@ -489,6 +543,9 @@ export function apply(ctx) {
       ok: true,
       sessionId: sessionId || null,
       scope,
+      firstRun: Object.keys(state.nodes).length === 0,
+      auto: state.config.auto === true,
+      sessionNodes: sessionId ? sessionNodeCount(state, sessionId) : 0,
       layout: graph,
       config: state.config,
       stats: stats(),
@@ -557,6 +614,7 @@ export function apply(ctx) {
     if (typeof patch.importance === 'number') node.importance = Math.round(clamp(patch.importance, 0, 100))
     if (typeof patch.kind === 'string') node.kind = sanitizeKind(patch.kind)
     if (typeof patch.pinned === 'boolean') node.pinned = patch.pinned
+    if (typeof patch.createdAt === 'string' && !Number.isNaN(Date.parse(patch.createdAt))) node.created = new Date(patch.createdAt).toISOString()
     node.updated = nowIso()
     if (body.sessionId) refreshDigest(state, body.sessionId)
     await persist()
@@ -593,9 +651,12 @@ export function apply(ctx) {
       memories: [{
         title,
         summary: typeof body.summary === 'string' ? body.summary : '',
+        evidence: typeof body.evidence === 'string' ? body.evidence : '',
         keywords: Array.isArray(body.keywords) ? body.keywords : [],
         importance: typeof body.importance === 'number' ? body.importance : 55,
         kind: body.kind,
+        created: typeof body.createdAt === 'string' ? body.createdAt : undefined,
+        manual: true,
       }],
       relations: [],
     })
@@ -662,6 +723,32 @@ export function apply(ctx) {
     return html(res).send(200, { ok: true, session: { id: sessionId, enabled: sess.enabled !== false } })
   })
 
+  /** 清空本会话的记忆（含托盘与批次），用于「重新开始」 */
+  route('/session/forget', async (req, res) => {
+    await ready
+    const body = await readJson(req)
+    const sessionId = body && body.sessionId
+    if (!sessionId) return html(res).send(400, { ok: false, error: 'missing sessionId' })
+    let removed = 0
+    for (const node of Object.values(state.nodes)) {
+      if (Array.isArray(node.sessions) && node.sessions.includes(sessionId)) {
+        delete state.nodes[node.id]
+        removed += 1
+        for (const edge of Object.values(state.edges)) {
+          if (edge.from === node.id || edge.to === node.id) delete state.edges[edge.id]
+        }
+      }
+    }
+    const sess = sessionState(state, sessionId)
+    sess.tray = []
+    sess.digest = { text: '', nodeIds: [], updatedAt: null }
+    state.batches = state.batches.filter((batch) => batch.sessionId !== sessionId)
+    buffers.delete(sessionId)
+    state.updatedAt = nowIso()
+    await persist()
+    return html(res).send(200, { ok: true, removed })
+  })
+
   route('/export', async (req, res) => {
     await ready
     const graph = exportGraph(state)
@@ -701,7 +788,21 @@ export function apply(ctx) {
   try {
     const tools = ctx.get('tools')
     if (tools && typeof tools.register === 'function') {
-      for (const definition of toolDefinitions()) tools.register(definition)
+      for (const definition of toolDefinitions()) {
+        try {
+          // register() 要 compiled JSON Schema（顶层 type:'object' + properties + required）；
+          // 这里直接用 core 里同一份便携 schema，避免两处漂移。
+          const manifest = TOOL_MANIFEST.find((tool) => tool.name === definition.name)
+          if (!manifest) throw new Error(`Missing tool schema: ${definition.name}`)
+          const parameters = JSON.parse(JSON.stringify(manifest.parameters))
+          const required = Array.isArray(parameters.required) ? parameters.required : Object.keys(parameters.properties || {}).filter((key) => parameters.properties[key].required === true)
+          for (const key of Object.keys(parameters.properties || {})) delete parameters.properties[key].required
+          if (required.length > 0) parameters.required = required
+          tools.register({ ...definition, parameters })
+        } catch (error) {
+          console.warn(`[memory-bubble] tool ${definition.name} register failed:`, error && error.message ? error.message : error)
+        }
+      }
     }
   } catch (error) {
     console.warn('[memory-bubble] tools register failed:', error && error.message ? error.message : error)
@@ -715,16 +816,26 @@ export function apply(ctx) {
         name: 'memory_search',
         description: '在「忆泡」长期记忆图谱里检索记忆点。用户提到过去说过的事、偏好、计划时先查这里。',
         parameters: {
-          query: { type: 'string', required: true, description: '关键词或自然语言描述' },
-          limit: { type: 'number', description: '最多返回几条，默认 5' },
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: '关键词或自然语言描述' },
+            limit: { type: 'number', description: '最多返回几条，默认 5' },
+          },
+          required: ['query'],
+          additionalProperties: false,
         },
         output,
-        async execute(args) {
+        async execute(args, exec) {
           await ready
           const query = String((args && args.query) || '').trim()
           const limit = clamp(Number((args && args.limit) || 5), 1, 20)
+          const sessionId = (exec && exec.sessionId) || (args && args.sessionId) || ''
           const words = query.split(/\s+/).filter(Boolean)
-          const scored = Object.values(state.nodes).map((node) => {
+          const pool = Object.values(state.nodes).filter((node) => {
+            if (!sessionId) return true
+            return Array.isArray(node.sessions) && node.sessions.includes(sessionId)
+          })
+          const scored = pool.map((node) => {
             const haystack = `${node.title} ${node.summary} ${(node.keywords || []).join(' ')}`.toLowerCase()
             let score = 0
             for (const word of words) if (word && haystack.includes(word.toLowerCase())) score += 3
@@ -746,12 +857,16 @@ export function apply(ctx) {
         name: 'memory_brief',
         description: '读取「忆泡」为本会话生成的稳定记忆简报（当前会随每步自动注入，需要完整清单时调用）。',
         parameters: {
-          sessionId: { type: 'string', description: '会话 id；省略则取最近活跃会话' },
+          type: 'object',
+          properties: {
+            sessionId: { type: 'string', description: '会话 id；省略则取最近活跃会话' },
+          },
+          additionalProperties: false,
         },
         output,
-        async execute(args) {
+        async execute(args, exec) {
           await ready
-          let sessionId = args && args.sessionId
+          let sessionId = (exec && exec.sessionId) || (args && args.sessionId)
           if (!sessionId) {
             const sessions = Object.values(state.sessions).filter((item) => item.lastTurnAt)
             sessions.sort((a, b) => String(b.lastTurnAt).localeCompare(String(a.lastTurnAt)))
@@ -765,19 +880,32 @@ export function apply(ctx) {
         name: 'memory_remember',
         description: '把一个值得长期记住的信息写进「忆泡」。用户明确说“记住”、透露重要偏好/身份/计划时调用。',
         parameters: {
-          title: { type: 'string', required: true, description: '不超过 12 字的短标题' },
-          summary: { type: 'string', required: true, description: '1-2 句、可脱离对话独立看懂' },
-          keywords: { type: 'array', description: '2-5 个短关键词' },
-          importance: { type: 'number', description: '0-100，影响长期行为越高越重要' },
-          kind: { type: 'string', description: '偏好|事实|计划|关系|目标|情绪|禁忌' },
-          sessionId: { type: 'string', description: '来源会话 id，可省略' },
+          type: 'object',
+          properties: {
+            title: { type: 'string', description: '不超过 12 字的短标题' },
+            summary: { type: 'string', description: '1-2 句、可脱离对话独立看懂' },
+            keywords: { type: 'array', items: { type: 'string' }, description: '2-5 个短关键词' },
+            importance: { type: 'number', description: '0-100，影响长期行为越高越重要' },
+            kind: { type: 'string', description: '偏好|事实|计划|关系|目标|情绪|禁忌' },
+            sessionId: { type: 'string', description: '来源会话 id，可省略' },
+          },
+          required: ['title', 'summary'],
+          additionalProperties: false,
         },
         output,
         async execute(args, exec) {
           await ready
           const sessionId = (args && args.sessionId) || (exec && exec.sessionId) || 'mcp-manual'
           const batch = mergeExtraction(state, sessionId, {
-            memories: [{ title: args && args.title, summary: args && args.summary, keywords: args && args.keywords, importance: args && args.importance, kind: args && args.kind }],
+            memories: [{
+              title: args && args.title,
+              summary: args && args.summary,
+              evidence: (args && args.evidence) || '用户要求记住',
+              keywords: args && args.keywords,
+              importance: args && args.importance,
+              kind: args && args.kind,
+              manual: true,
+            }],
             relations: [],
           })
           refreshDigest(state, sessionId)
@@ -790,11 +918,16 @@ export function apply(ctx) {
         name: 'memory_link',
         description: '在「忆泡」里连接两条记忆，并写清关系；内容矛盾时把 conflict 设为 true。',
         parameters: {
-          from: { type: 'string', required: true, description: '记忆 id' },
-          to: { type: 'string', required: true, description: '记忆 id' },
-          summary: { type: 'string', required: true, description: '关系说明' },
-          relation: { type: 'string', description: '因果|印证|同主题|对立|相关' },
-          conflict: { type: 'boolean', description: '两条记忆是否互相矛盾' },
+          type: 'object',
+          properties: {
+            from: { type: 'string', description: '记忆 id' },
+            to: { type: 'string', description: '记忆 id' },
+            summary: { type: 'string', description: '关系说明' },
+            relation: { type: 'string', description: '因果|印证|同主题|对立|相关' },
+            conflict: { type: 'boolean', description: '两条记忆是否互相矛盾' },
+          },
+          required: ['from', 'to', 'summary'],
+          additionalProperties: false,
         },
         output,
         async execute(args) {
@@ -811,7 +944,12 @@ export function apply(ctx) {
         name: 'memory_forget',
         description: '从「忆泡」里删除一条记忆（连同它的连线）。用户说“忘掉这个”时调用。',
         parameters: {
-          id: { type: 'string', required: true, description: '记忆 id' },
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: '记忆 id' },
+          },
+          required: ['id'],
+          additionalProperties: false,
         },
         output,
         async execute(args) {

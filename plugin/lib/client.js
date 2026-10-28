@@ -27,6 +27,75 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'memory-bubble'
     const store = { sessionId: null }
 
+    /* ------------------------------------------------------------ 浮窗状态（默认关闭，位置/大小记忆） */
+
+    const WINDOW_KEY = 'memory-bubble.window.v1'
+    const win = { open: false, rect: null, listeners: new Set() }
+
+    function safeStorage() {
+      try {
+        if (typeof localStorage !== 'undefined' && localStorage) return localStorage
+      } catch { /* ignore */ }
+      return null
+    }
+
+    function readWindowPrefs() {
+      try {
+        const raw = safeStorage() && safeStorage().getItem(WINDOW_KEY)
+        if (!raw) return
+        const parsed = JSON.parse(raw)
+        if (!parsed || typeof parsed !== 'object') return
+        win.open = parsed.open === true
+        if (parsed.rect && typeof parsed.rect === 'object') win.rect = parsed.rect
+      } catch { /* ignore */ }
+    }
+    readWindowPrefs()
+
+    function saveWindowPrefs() {
+      try {
+        const storage = safeStorage()
+        if (storage) storage.setItem(WINDOW_KEY, JSON.stringify({ open: win.open, rect: win.rect }))
+      } catch { /* ignore */ }
+    }
+
+    function patchWin(patch) {
+      Object.assign(win, patch)
+      if (patch.rect === undefined) saveWindowPrefs()
+      for (const listener of Array.from(win.listeners)) {
+        try { listener() } catch { /* ignore */ }
+      }
+    }
+
+    function useWindowState() {
+      const [, force] = useState(0)
+      useEffect(() => {
+        const listener = () => force((n) => n + 1)
+        win.listeners.add(listener)
+        return () => { win.listeners.delete(listener) }
+      }, [])
+      return win
+    }
+
+    function screenSize() {
+      try {
+        if (typeof window !== 'undefined' && window.innerWidth) return { w: window.innerWidth, h: window.innerHeight }
+      } catch { /* ignore */ }
+      return { w: 1280, h: 800 }
+    }
+
+    function clampRect(rect) {
+      const screen = screenSize()
+      const minW = 380
+      const minH = 360
+      const width = Math.min(Math.max(Number(rect && rect.w) || 540, minW), Math.max(minW, screen.w - 40))
+      const height = Math.min(Math.max(Number(rect && rect.h) || 660, minH), Math.max(minH, screen.h - 80))
+      const fallbackX = screen.w - width - 28
+      const fallbackY = 76
+      const x = Math.min(Math.max(Number.isFinite(rect && rect.x) ? rect.x : fallbackX, 8), Math.max(8, screen.w - width - 8))
+      const y = Math.min(Math.max(Number.isFinite(rect && rect.y) ? rect.y : fallbackY, 56), Math.max(56, screen.h - height - 8))
+      return { x: Math.round(x), y: Math.round(y), w: Math.round(width), h: Math.round(height) }
+    }
+
     /* ------------------------------------------------------------ 工具函数 */
 
     const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
@@ -64,6 +133,20 @@ window.__ModuleLoader__.load({
       const date = new Date(iso)
       if (Number.isNaN(date.getTime())) return '—'
       return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    }
+
+    /* 时间字段：input[type=datetime-local] 用本地时区字符串，保存时转 ISO */
+    function toLocalDateTime(iso) {
+      const date = new Date(iso)
+      if (Number.isNaN(date.getTime())) return ''
+      const pad = (n) => String(n).padStart(2, '0')
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+    }
+
+    function fromLocalDateTime(value) {
+      if (!value) return ''
+      const date = new Date(value)
+      return Number.isNaN(date.getTime()) ? '' : date.toISOString()
     }
 
     async function api(path, options) {
@@ -248,12 +331,40 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
   box-shadow:0 14px 40px rgba(238,122,84,.4);animation:mb-breathe 3.4s ease-in-out infinite}
 @keyframes mb-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
 @media (prefers-reduced-motion:reduce){.mb-empty .bubble{animation:none}.mb-toast{animation:none}}
+.mb-banner{display:flex;align-items:center;gap:12px;padding:8px 20px;font-size:12px;color:var(--mb-ink-soft);
+  background:var(--mb-chip);border-bottom:1px solid var(--mb-line);flex:none}
+.mb-banner span{flex:1}
 .mb-settings{display:flex;flex-direction:column;gap:14px;padding:6px 2px;max-width:560px;color:var(--mb-ink);font-size:13px}
 .mb-settings h4{margin:0;font-size:14px}
 .mb-settings p{margin:0;font-size:12px;color:var(--mb-ink-soft);line-height:1.6}
 .mb-settings label{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 14px;border:1px solid var(--mb-line);border-radius:14px;background:var(--mb-card)}
 .mb-settings input[type=number],.mb-settings select{border:1px solid var(--mb-line);background:var(--mb-chip);color:var(--mb-ink);border-radius:8px;padding:5px 8px;font-size:12px}
 .mb-settings .hint{font-size:11px;color:var(--mb-ink-soft)}
+/* 浮窗：可拖动、可缩放、页面内关闭；默认不打开 */
+.mb-window{position:fixed;z-index:60;display:flex;flex-direction:column;min-width:380px;min-height:360px;
+  border-radius:24px;background:var(--mb-bg);border:1px solid var(--mb-line);box-shadow:0 26px 70px rgba(120,74,48,.24);
+  overflow:hidden;animation:mb-win-in .18s ease}
+@keyframes mb-win-in{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
+html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
+.mb-winbar{display:flex;align-items:center;gap:10px;padding:9px 12px 9px 16px;cursor:move;flex:none;user-select:none;
+  border-bottom:1px solid var(--mb-line);background:var(--mb-card);color:var(--mb-ink)}
+.mb-winbar .dot{width:14px;height:14px;border-radius:50%;background:radial-gradient(circle at 32% 28%,#fff3e4,#ffc39b 45%,#f4885c 100%);box-shadow:0 2px 6px rgba(238,122,84,.5)}
+.mb-winbar b{font-size:13px;font-weight:650}
+.mb-winbar .sub{font-size:10.5px;color:var(--mb-ink-soft);opacity:.8}
+.mb-win-actions{margin-left:auto;display:flex;align-items:center;gap:6px}
+.mb-win-btn{width:26px;height:26px;border-radius:50%;border:1px solid var(--mb-line);background:var(--mb-card-strong);
+  color:var(--mb-ink-soft);cursor:pointer;font-size:13px;line-height:1;display:flex;align-items:center;justify-content:center}
+.mb-win-btn:hover{color:var(--mb-coral);border-color:var(--mb-coral)}
+.mb-window-body{position:relative;flex:1;min-height:0}
+.mb-window .mb-root{position:absolute;inset:0;border:0;border-radius:0;box-shadow:none}
+.mb-win-resize{position:absolute;right:0;bottom:0;width:20px;height:20px;cursor:nwse-resize;z-index:5;
+  background:linear-gradient(135deg,transparent 50%,var(--mb-line) 50%);opacity:.8}
+.mb-side-entry{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;
+  border:1px solid var(--mb-line);background:var(--mb-card);cursor:pointer;padding:0}
+.mb-side-entry .dot{width:18px;height:18px;border-radius:50%;background:radial-gradient(circle at 32% 28%,#fff3e4,#ffc39b 45%,#f4885c 100%);
+  box-shadow:0 2px 8px rgba(238,122,84,.45)}
+.mb-side-entry.on{border-color:var(--mb-coral);box-shadow:0 0 0 2px rgba(244,113,77,.18)}
+.mb-side-entry:hover .dot{transform:scale(1.06)}
 `
 
     function ensureStyle() {
@@ -296,7 +407,7 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
 
       const [data, setData] = useState(null)
       const [error, setError] = useState('')
-      const [scope, setScope] = useState('all')
+      const [scope, setScope] = useState('session')
       const [sessionId, setSessionId] = useState(store.sessionId || '')
       const [search, setSearch] = useState('')
       const [selected, setSelected] = useState(null)
@@ -305,6 +416,7 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
       const [settingsOpen, setSettingsOpen] = useState(false)
       const [digestOpen, setDigestOpen] = useState(false)
       const [confirmUndo, setConfirmUndo] = useState(false)
+      const [confirmForget, setConfirmForget] = useState(false)
       const viewportRef = useRef(null)
       const viewRef = useRef({ ox: 0, oy: 0, scale: 1 })
       const dragRef = useRef(null)
@@ -338,7 +450,9 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
         if (!silent) setError('')
         try {
           const sid = (opts && opts.sessionId) || sessionId || store.sessionId || ''
-          const response = await api(`/graph?sessionId=${encodeURIComponent(sid)}&scope=${encodeURIComponent((opts && opts.scope) || scope)}`)
+          const wanted = (opts && opts.scope) || scope
+          const effective = !sid && wanted === 'session' ? 'all' : wanted
+          const response = await api(`/graph?sessionId=${encodeURIComponent(sid)}&scope=${encodeURIComponent(effective)}`)
           setData(response)
           if (!sid && response.sessions && response.sessions.length) {
             const first = response.sessions[0]
@@ -356,7 +470,10 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
 
       useEffect(() => { void load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
       useEffect(() => {
-        const timer = setInterval(() => { if (!busy) void load({ silent: true, sessionId }) }, 6000)
+        const timer = setInterval(() => {
+          if (typeof document !== 'undefined' && document.hidden) return
+          if (!busy) void load({ silent: true, sessionId })
+        }, 6000)
         return () => clearInterval(timer)
       }, [busy, load, sessionId])
 
@@ -372,8 +489,33 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
       const edges = data && data.layout ? data.layout.edges : []
       const session = (data && data.session) || { enabled: true, tray: [] }
       const config = (data && data.config) || {}
+      const stats = (data && data.stats) || { totalNodes: 0 }
+      const autoOn = (data && data.auto === true) || config.auto === true
       const scale = view.scale
       const tier = tierOf(scale)
+
+      const enableAuto = async () => {
+        try {
+          await api('/config', { method: 'POST', body: JSON.stringify({ config: { auto: true } }) })
+          if (sessionId) await api('/session', { method: 'POST', body: JSON.stringify({ sessionId, enabled: true }) })
+          toast('已开启：只读本会话，聊几轮就会自动长出泡泡')
+          await load({ silent: false })
+        } catch (err) { toast(String(err.message || err)) }
+      }
+
+      // 手动新增：先落下新泡泡，再在页面内弹出编辑小窗（标题/内容/时间/关键词/重要性都可改）
+      const addDraft = async () => {
+        setBusy('create')
+        try {
+          const result = await api('/node/create', {
+            method: 'POST',
+            body: JSON.stringify({ title: '新记忆', summary: '', keywords: [], importance: 55, sessionId: sessionId || 'manual', createdAt: new Date().toISOString() }),
+          })
+          await load({ silent: true, sessionId })
+          if (result && result.id) setSelected({ type: 'node', id: result.id })
+          toast('新泡泡出现了，填好内容点保存')
+        } catch (err) { toast(String(err.message || err)) } finally { setBusy('') }
+      }
 
       const searchKey = search.trim().toLowerCase()
       const matched = new Set()
@@ -386,7 +528,11 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
 
       const nodeById = new Map(nodes.map((node) => [node.id, node]))
       const edgeById = new Map(edges.map((edge) => [edge.id, edge]))
-      const selectedNode = selected && selected.type === 'node' ? nodeById.get(selected.id) : null
+      const selectedNode = selected && selected.type === 'node'
+        ? (selected.id === '__new__'
+          ? { id: '__new__', title: '', summary: '', keywords: [], importance: 55, kind: 'fact', created: new Date().toISOString(), hits: 1 }
+          : nodeById.get(selected.id))
+        : null
       const selectedEdge = selected && selected.type === 'edge' ? edgeById.get(selected.id) : null
 
       const onWheel = (event) => {
@@ -521,8 +667,8 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
             `${item.title || item.id.slice(0, 8)} · ${item.extractCount || 0} 次`)))
           : null,
         h('div', { className: 'mb-seg' },
-          h('button', { className: scope === 'all' ? 'on' : '', onClick: () => { setScope('all'); void load({ scope: 'all' }) } }, '全部'),
-          h('button', { className: scope === 'session' ? 'on' : '', onClick: () => { setScope('session'); void load({ scope: 'session' }) } }, '本会话')),
+          h('button', { className: scope === 'session' ? 'on' : '', onClick: () => { setScope('session'); void load({ scope: 'session' }) } }, '本会话'),
+          h('button', { className: scope === 'all' ? 'on' : '', onClick: () => { setScope('all'); void load({ scope: 'all' }) } }, '全部记忆')),
         h('div', { className: 'mb-search' },
           h('span', { style: { opacity: 0.55 } }, '⌕'),
           h('input', {
@@ -607,6 +753,33 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
               : null)
         }))
 
+      const emptyPanel = scope === 'session' && stats.totalNodes > 0
+        ? h('div', { className: 'mb-empty' },
+          h('div', { className: 'bubble' }),
+          h('div', null, '本会话还没有记忆泡泡'),
+          h('div', { style: { fontSize: 12, opacity: 0.78, textAlign: 'center', maxWidth: 360, lineHeight: 1.75 } },
+            `本会话从零开始记录。其他会话里已有 ${stats.totalNodes} 条记忆，但它们不会跑进来——这是故意的，防止串话。`),
+          h('div', { style: { display: 'flex', gap: 10, marginTop: 4 } },
+            h('button', { className: 'mb-btn ghost', onClick: () => { setScope('all'); void load({ scope: 'all' }) } }, '看看其他会话的记忆'),
+            sessionId ? h('button', { className: 'mb-btn ghost', onClick: () => { void load({ silent: false }) } }, '刷新') : null))
+        : h('div', { className: 'mb-empty' },
+          h('div', { className: 'bubble' }),
+          h('div', null, autoOn ? '聊起来，泡泡就会长出来' : '忆泡刚装好，还是空的'),
+          h('div', { style: { fontSize: 12, opacity: 0.8, textAlign: 'center', maxWidth: 420, lineHeight: 1.8 } },
+            autoOn
+              ? '只记录本会话、且只在你说了话之后才会总结；开局没有任何预置人设或记忆，所以它不会假装认识你。'
+              : '忆泡不会凭空编记忆。开启后，它只在你说过话的会话里自动总结；也可以先手动记一条试试。'),
+          h('div', { style: { display: 'flex', gap: 10, marginTop: 6 } },
+            autoOn ? null : h('button', { className: 'mb-btn primary', onClick: () => { void enableAuto() } }, '开启读取对话'),
+            h('button', { className: 'mb-btn ghost', onClick: () => { void addDraft() } }, '＋ 手动记一条'),
+            h('button', { className: 'mb-btn ghost', onClick: () => { setDigestOpen(true) } }, '看看简报长什么样')))
+
+      const banner = !autoOn && stats.totalNodes > 0
+        ? h('div', { className: 'mb-banner' },
+          h('span', null, '自动读取对话已关闭：忆泡只会记你手动添加的内容。'),
+          h('button', { className: 'mb-btn ghost', onClick: () => { void enableAuto() } }, '开启自动读取'))
+        : null
+
       const viewport = h('div', {
         ref: viewportRef,
         className: 'mb-viewport',
@@ -617,18 +790,14 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
         onPointerLeave: endDrag,
         onDoubleClick: () => fitView(data && data.layout),
       },
-        nodes.length ? stage : h('div', { className: 'mb-empty' },
-          h('div', { className: 'bubble' }),
-          h('div', null, '这里还没有记忆泡泡'),
-          h('div', { style: { fontSize: 12, opacity: 0.75, textAlign: 'center', maxWidth: 340, lineHeight: 1.7 } },
-            '在设置里打开「读取对话并自动生成记忆」，聊几轮就会自动长出泡泡；也可以点「＋ 手动记一条」自己种下第一颗。')),
+        nodes.length ? stage : emptyPanel,
         h('div', { className: 'mb-legend' }, h('span', null, '大 = 重要'), h('span', { style: { opacity: 0.5 } }, '·'), h('span', null, '中心 = 高频'), h('span', { style: { opacity: 0.5 } }, '·'), h('b', null, tier.label)),
         h('div', { className: 'mb-zoom-pill' }, `${Math.round(scale * 100)}% · 滚轮缩放 · 拖拽平移 · 双击适应`),
         h('button', {
           className: 'mb-btn primary',
           title: '手动新增/编辑一条记忆；自动生成由设置里的开关控制，不会走这个按钮',
           style: { position: 'absolute', right: 18, top: 18, boxShadow: '0 10px 26px rgba(244,113,77,.3)' },
-          onClick: () => setSelected({ type: 'node', id: '__new__' }),
+          onClick: () => { void addDraft() },
         }, '＋ 手动记一条'))
 
       const tray = h('div', { className: 'mb-tray' },
@@ -649,6 +818,17 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
               } catch (err) { toast(String(err.message || err)) }
             } }), '本会话自动生成')
           : null,
+        sessionId && (stats.sessionNodes || 0) > 0
+          ? h('button', { className: 'mb-btn ghost' + (confirmForget ? ' danger' : ''), title: '删除本会话的全部记忆（可重新开始）', onClick: async () => {
+            if (!confirmForget) { setConfirmForget(true); setTimeout(() => setConfirmForget(false), 3000); return }
+            try {
+              const result = await api('/session/forget', { method: 'POST', body: JSON.stringify({ sessionId }) })
+              setConfirmForget(false)
+              toast(`已清空本会话的 ${result.removed || 0} 条记忆`)
+              await load({ silent: false, sessionId })
+            } catch (err) { toast(String(err.message || err)) }
+          } }, confirmForget ? '再点一次清空' : '清空本会话')
+          : null,
         h('button', { className: 'mb-btn ghost', disabled: !sessionId, onClick: () => { setDigestOpen(true) } }, '预览简报'),
         h('div', { style: { fontSize: 11, color: 'var(--mb-ink-soft)', whiteSpace: 'nowrap' } },
           session.pending ? '本轮总结中…' : session.lastError ? `上次总结失败：${String(session.lastError).slice(0, 22)}` : session.lastExtractAt ? `上次总结 ${fmtDate(session.lastExtractAt)}` : '尚未总结'))
@@ -666,7 +846,7 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
       const drawer = digestOpen
         ? h('div', { className: 'mb-drawer' },
           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
-            h('div', { style: { fontSize: 13, fontWeight: 600 } }, '本轮记忆简报'),
+            h('div', { style: { fontSize: 13, fontWeight: 600 } }, '本轮记忆简报（只含本会话）'),
             h('button', { className: 'mb-close', style: { position: 'static' }, onClick: () => setDigestOpen(false) }, '✕')),
           h('pre', null, (data && data.digest) || '（还没有简报：先聊几轮，或点「立即总结」）'))
         : null
@@ -679,12 +859,94 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
 
       return h('div', { className: 'mb-root', 'data-mb-theme': scheme },
         header,
+        banner,
         viewport,
         tray,
         card,
         pop,
         drawer,
         h(ToastStack, { toasts }))
+    }
+
+    /* ------------------------------------------------------------ 浮窗壳 */
+
+    function BubbleWindow({ ctx }) {
+      const state = useWindowState()
+      const [rect, setRect] = useState(() => clampRect(win.rect))
+      const dragRef = useRef(null)
+      const [active, setActive] = useState(false)
+
+      useEffect(() => {
+        if (!state.open) return
+        setRect(clampRect(win.rect))
+      }, [state.open])
+
+      if (!state.open) return null
+
+      const move = (event) => {
+        const drag = dragRef.current
+        if (!drag) return
+        if (drag.mode === 'move') {
+          setRect(clampRect(Object.assign({}, drag.base, { x: event.clientX - drag.dx, y: event.clientY - drag.dy })))
+        } else {
+          setRect(clampRect(Object.assign({}, drag.base, { w: drag.base.w + event.clientX - drag.startX, h: drag.base.h + event.clientY - drag.startY })))
+        }
+      }
+      const end = () => {
+        if (!dragRef.current) return
+        dragRef.current = null
+        setActive(false)
+        if (typeof window !== 'undefined') {
+          window.removeEventListener('pointermove', move)
+          window.removeEventListener('pointerup', end)
+        }
+        setRect((current) => {
+          patchWin({ rect: current })
+          return current
+        })
+      }
+      const begin = (mode, event) => {
+        if (event.button !== 0) return
+        if (mode === 'move' && event.target && event.target.closest && event.target.closest('.mb-win-btn')) return
+        event.preventDefault()
+        dragRef.current = { mode, dx: event.clientX - rect.x, dy: event.clientY - rect.y, startX: event.clientX, startY: event.clientY, base: rect }
+        setActive(true)
+        if (typeof window !== 'undefined') {
+          window.addEventListener('pointermove', move)
+          window.addEventListener('pointerup', end)
+        }
+      }
+      const reset = () => {
+        win.rect = null
+        saveWindowPrefs()
+        setRect(clampRect(null))
+      }
+
+      return h('div', {
+        className: 'mb-window',
+        style: { left: rect.x + 'px', top: rect.y + 'px', width: rect.w + 'px', height: rect.h + 'px' },
+      },
+        h('div', { className: 'mb-winbar', onPointerDown: (event) => begin('move', event) },
+          h('span', { className: 'dot' }),
+          h('b', null, '忆泡'),
+          h('span', { className: 'sub' }, '随聊随记 · 可拖动/缩放'),
+          h('div', { className: 'mb-win-actions' },
+            h('button', { className: 'mb-win-btn', title: '回到默认位置', onClick: reset }, '⌂'),
+            h('button', { className: 'mb-win-btn', title: '关闭（本会话不再显示；侧栏图标可再打开）', onClick: () => patchWin({ open: false }) }, '✕'))),
+        h('div', { className: 'mb-window-body' },
+          h(GraphPanel, { ctx }),
+          h('div', { className: 'mb-win-resize', title: '拖动改变大小', onPointerDown: (event) => begin('resize', event) })),
+        active ? h('div', { style: { position: 'absolute', inset: 0 } }) : null)
+    }
+
+    function SideEntry({ ctx }) {
+      const state = useWindowState()
+      return h('button', {
+        className: 'mb-side-entry' + (state.open ? ' on' : ''),
+        title: state.open ? '收起忆泡（不停止本会话记录）' : '打开忆泡记忆图',
+        'aria-label': '忆泡',
+        onClick: () => patchWin({ open: !win.open }),
+      }, h('span', { className: 'dot' }))
     }
 
     /* ------------------------------------------------------------ 详情卡 */
@@ -696,6 +958,7 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
       const [keywords, setKeywords] = useState(isNew ? '' : (node.keywords || []).join('、'))
       const [importance, setImportance] = useState(isNew ? 55 : node.importance || 50)
       const [kind, setKind] = useState(isNew ? 'fact' : node.kind || 'fact')
+      const [created, setCreated] = useState(toLocalDateTime(node.created || new Date().toISOString()))
       const [saving, setSaving] = useState(false)
       const [deleteArmed, setDeleteArmed] = useState(false)
 
@@ -704,10 +967,10 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
         setSaving(true)
         try {
           if (isNew) {
-            await api('/node/create', { method: 'POST', body: JSON.stringify({ title, summary, keywords: keywords.split(/[、,，\s]+/).filter(Boolean), importance, kind, sessionId: sessionId || 'manual' }) })
+            await api('/node/create', { method: 'POST', body: JSON.stringify({ title, summary, keywords: keywords.split(/[、,，\s]+/).filter(Boolean), importance, kind, sessionId: sessionId || 'manual', createdAt: fromLocalDateTime(created) }) })
             toast('已种下一颗新泡泡')
           } else {
-            await api('/node', { method: 'POST', body: JSON.stringify({ id: node.id, sessionId, patch: { title, summary, keywords: keywords.split(/[、,，\s]+/).filter(Boolean), importance, kind } }) })
+            await api('/node', { method: 'POST', body: JSON.stringify({ id: node.id, sessionId, patch: { title, summary, keywords: keywords.split(/[、,，\s]+/).filter(Boolean), importance, kind, createdAt: fromLocalDateTime(created) } }) })
             toast('已保存，泡泡大小与简报同步更新')
           }
           onClose()
@@ -741,6 +1004,12 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
       return h('div', { className: 'mb-card', onClick: (event) => event.stopPropagation() },
         h('button', { className: 'mb-close', onClick: onClose }, '✕'),
         h('div', { className: 'meta' }, isNew ? '新记忆' : `${fmtDate(node.created)} · 出现 ${node.hits || 1} 次 · ${KIND_LABELS[node.kind] || '事实'}`),
+        isNew || !node.evidence
+          ? null
+          : h('div', { className: 'section-label', style: { marginTop: 2 } }, '依据（用户原话）'),
+        isNew || !node.evidence
+          ? null
+          : h('div', { style: { fontSize: 11.5, color: 'var(--mb-ink-soft)', lineHeight: 1.6, padding: '2px 2px 4px' } }, `「${node.evidence}」`),
         h('div', { className: 'section-label' }, '标题'),
         h('input', { type: 'text', value: title, maxLength: 40, placeholder: '不超过 12 字最好认', onChange: (event) => setTitle(event.target.value) }),
         h('div', { className: 'section-label' }, '记忆本身'),
@@ -750,6 +1019,8 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
         h('div', { className: 'section-label' }, '类型'),
         h('select', { value: kind, onChange: (event) => setKind(event.target.value) },
           Object.keys(KIND_LABELS).map((key) => h('option', { key, value: key }, KIND_LABELS[key]))),
+        h('div', { className: 'section-label' }, '记录时间'),
+        h('input', { type: 'datetime-local', value: created, onChange: (event) => setCreated(event.target.value) }),
         h('div', { className: 'section-label' }, `重要性 ${importance}`, isNew ? '' : '（越大越重要，影响泡泡大小与简报排序）'),
         h('div', { className: 'row' },
           h('input', { type: 'range', min: 0, max: 100, value: importance, onChange: (event) => setImportance(Number(event.target.value)) }),
@@ -962,9 +1233,9 @@ html[data-mb-theme="dark"] .mb-toast{background:rgba(20,14,12,.92);color:#ffe9d8
         return undefined
       }
 
-      inject('sidebar.panellist', { name: 'sidebar.panellist', id: PANEL_ID, order: 22, label: () => '忆泡' }, GraphPanel, '忆泡')
-      inject('main', { name: 'main', key: PANEL_ID }, GraphPanel, '忆泡')
-      inject('conversation.input.left', { name: 'conversation.input.left', id: PANEL_ID + '-trigger', order: 45, label: () => '忆泡' }, TriggerPill, '忆泡')
+      // 入口只放侧栏（顺序靠后，不打乱已装插件入口）；主界面不再是“全屏面板”，而是侧栏图标唤起的可拖动浮窗
+      inject('sidebar.panellist', { name: 'sidebar.panellist', id: PANEL_ID, order: 900, label: () => '忆泡' }, SideEntry, '忆泡')
+      inject('shell.overlay', { name: 'shell.overlay', id: PANEL_ID, order: 60 }, BubbleWindow, '忆泡')
       inject('settings.section', { name: 'settings.section', id: PANEL_ID, order: 70, label: () => '忆泡' }, SettingsSection, '忆泡')
     }
 
