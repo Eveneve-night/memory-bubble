@@ -1,5 +1,19 @@
 # 更新日志
 
+## v0.3.4 — 2026-10-28
+
+**主题：修复互操作层 remember 被防幻觉守卫丢弃**
+
+### 修复
+
+- `interop/lib.mjs` 的 `remember()` 现在会带上 `manual: true`：外部 AI / CLI / MCP 的 `remember` 属于“用户明确要求记下”的手工写入，不再被自动抽取的「必须有用户原话依据」规则静默丢弃（v0.2.2 引入防幻觉守卫后 CLI/MCP 静默不落库的回归）
+- `remember` 支持可选 `evidence` 字段，MCP `memory_remember` 也可传“依据原话”
+
+### 测试
+
+- interop 5/5（CLI remember / list / search / brief / export / bundle / import、bundle schema、MCP 全套）
+- core 13/13、plugin 14/14
+
 ## v0.3.3 — 2026-10-28
 
 **主题：侧栏图标可靠地打开/收起浮窗**

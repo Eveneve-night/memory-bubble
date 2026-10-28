@@ -106,6 +106,10 @@ export function remember(state, args = {}) {
       keywords: args.keywords,
       importance: args.importance,
       kind: args.kind,
+      // 外部 AI / CLI / MCP 的 remember 是“用户明确要求记下”，属于手工新增：
+      // 与自动抽取的“必须有用户原话依据”规则区分开，否则会被防幻觉守卫丢弃。
+      manual: true,
+      evidence: args.evidence ? String(args.evidence) : '',
     }],
     relations: [],
   })
