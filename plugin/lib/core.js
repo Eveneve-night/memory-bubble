@@ -195,35 +195,103 @@ export function decorate(state, focusSession) {
 
 /**
  * 画布布局（服务端算好，客户端只画）：频率越高越靠中心，重要性决定圆半径。
- * 位置只由数据决定，用户不能拖动 → 与「位置被动变化」的约定一致。
+ * 稳定随机起点 + 连线吸引 + 碰撞排斥，频率的径向约束优先于缩短连线。
+ * 相同数据总得到相同位置，避免轮询时跳动；不修改记忆数据。
  */
 export function computeLayout(state) {
-  const W = 760
-  const H = 560
+  const nodes = Object.values(state.nodes)
+  const radii = new Map(nodes.map((node) => [node.id, Math.round(16 + clamp(Number(node.importance ?? 50), 0, 100) * 0.3)]))
+  // Dense graphs need more room rather than overlapping or changing what size means.
+  const area = nodes.reduce((sum, node) => sum + Math.PI * (radii.get(node.id) + 8) ** 2, 0)
+  const expansion = Math.max(1, Math.sqrt(area / (760 * 560 * 0.28)))
+  const W = Math.ceil(760 * expansion)
+  const H = Math.ceil(560 * expansion)
   const cx = W / 2
   const cy = H / 2
-  const nodes = Object.values(state.nodes)
+  const maxHits = Math.max(1, ...nodes.map((node) => node.hits || 1))
+  const frequencies = new Map(nodes.map((node) => [node.id, clamp(Number.isFinite(node._freq) ? node._freq
+    : ((node.sessions?.length || 1) - 1) * 0.3 + (node.hits || 1) / maxHits * 0.55, 0, 1)]))
   const ranked = nodes.slice().sort((a, b) => {
-    const sa = (b._freq || 0) * 2.5 + (b.importance || 50) / 60
-    const sb = (a._freq || 0) * 2.5 + (a.importance || 50) / 60
-    return sa - sb
+    return frequencies.get(b.id) - frequencies.get(a.id)
+      || hash01(a.id + ':rank') - hash01(b.id + ':rank')
+      || String(a.id).localeCompare(String(b.id))
   })
-  const maxR = Math.min(W, H) * 0.42
-  const golden = Math.PI * (3 - Math.sqrt(5))
-  const positions = {}
+  const largestBubble = Math.max(0, ...radii.values())
+  const maxR = Math.min(Math.min(W, H) * 0.42, H / 2 - largestBubble - 24)
+  const points = []
   ranked.forEach((node, i) => {
-    const t = ranked.length <= 1 ? 0 : i / (ranked.length - 1)
-    const radius = maxR * (0.16 + 0.84 * Math.pow(t, 0.82))
-    const angle = i * golden + hash01(node.id) * 0.8
-    const jitterX = (hash01(node.id + 'x') - 0.5) * 18
-    const jitterY = (hash01(node.id + 'y') - 0.5) * 14
-    const r = Math.round(16 + ((node.importance == null ? 50 : node.importance) / 100) * 30)
-    positions[node.id] = {
-      x: Math.round(cx + Math.cos(angle) * radius + jitterX),
-      y: Math.round(cy + Math.sin(angle) * radius + jitterY),
-      r,
-    }
+    const radius = ranked.length <= 1 ? 0 : maxR * 0.93 * Math.sqrt((i + 0.25) / ranked.length)
+    const angle = hash01(node.id + ':angle') * Math.PI * 2
+    points.push({ id: node.id, x: Math.cos(angle) * radius, y: Math.sin(angle) * radius,
+      r: radii.get(node.id), target: radius, angle, dx: 0, dy: 0 })
   })
+  const byId = new Map(points.map((point) => [point.id, point]))
+  const links = Object.values(state.edges).filter((edge) => edge.from !== edge.to && byId.has(edge.from) && byId.has(edge.to))
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+  for (let step = 0; step < 480; step += 1) {
+    const settling = step >= 120
+    for (const p of points) {
+      const distance = Math.hypot(p.x, p.y)
+      const radial = settling ? 0 : (p.target - distance) * 0.12
+      const angle = distance > 0.001 ? Math.atan2(p.y, p.x) : p.angle
+      p.dx = Math.cos(angle) * radial
+      p.dy = Math.sin(angle) * radial
+    }
+    if (!settling) for (const link of links) {
+      const a = byId.get(link.from)
+      const b = byId.get(link.to)
+      const dx = b.x - a.x
+      const dy = b.y - a.y
+      const distance = Math.hypot(dx, dy) || 0.001
+      const pull = Math.max(0, distance - a.r - b.r - 16) * 0.045
+      a.dx += dx / distance * pull
+      a.dy += dy / distance * pull
+      b.dx -= dx / distance * pull
+      b.dy -= dy / distance * pull
+    }
+    let maxOverlap = 0
+    for (let i = 0; i < points.length; i += 1) for (let j = i + 1; j < points.length; j += 1) {
+      const a = points[i]
+      const b = points[j]
+      let dx = b.x - a.x
+      let dy = b.y - a.y
+      let distance = Math.hypot(dx, dy)
+      const gap = a.r + b.r + 12
+      if (distance >= gap) continue
+      maxOverlap = Math.max(maxOverlap, gap - distance)
+      if (distance < 0.001) { dx = Math.cos(a.angle); dy = Math.sin(a.angle); distance = 1 }
+      const push = (gap - distance) * 0.55
+      if (settling) {
+        // Resolve each contact immediately so dense clusters cannot cancel
+        // opposing collision forces and remain interpenetrating.
+        a.x -= dx / distance * push
+        a.y -= dy / distance * push
+        b.x += dx / distance * push
+        b.y += dy / distance * push
+      } else {
+        a.dx -= dx / distance * push
+        a.dy -= dy / distance * push
+        b.dx += dx / distance * push
+        b.dy += dy / distance * push
+      }
+    }
+    for (const p of points) {
+      const speed = Math.hypot(p.dx, p.dy)
+      const limit = settling ? 3 : 7
+      const ratio = speed > limit ? limit / speed : 1
+      p.x += p.dx * ratio
+      p.y += p.dy * ratio
+      const distance = Math.hypot(p.x, p.y)
+      // Once links settle, resolve contacts freely instead of pinning bubbles
+      // against their radial band and leaving visible intersections.
+      const outer = settling ? H / 2 - p.r - 24 : Math.min(maxR, p.target + maxR * 0.18)
+      const inner = settling ? 0 : Math.max(0, p.target - maxR * 0.18)
+      const radius = clamp(distance, inner, outer)
+      if (distance > 0.001) { p.x *= radius / distance; p.y *= radius / distance }
+    }
+    if (settling && maxOverlap < 0.5) break
+  }
+  const positions = Object.fromEntries(points.map((p) => [p.id, { x: Math.round(cx + p.x), y: Math.round(cy + p.y), r: p.r }]))
   const edges = Object.values(state.edges).map((edge) => {
     const a = positions[edge.from]
     const b = positions[edge.to]
@@ -251,7 +319,7 @@ export function computeLayout(state) {
       tone: node.tone || 'peach',
       keywords: Array.isArray(node.keywords) ? node.keywords.slice(0, 6) : [],
       importance: node.importance == null ? 50 : node.importance,
-      freq: node._freq || 0,
+      freq: frequencies.get(node.id),
       hits: node.hits || 1,
       sessions: Array.isArray(node.sessions) ? node.sessions.slice() : [],
       created: node.created || node.updated || null,

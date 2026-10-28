@@ -479,7 +479,7 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
         if (!viewport || !layout) return
         const width = viewport.clientWidth || 800
         const height = viewport.clientHeight || 600
-        const scale = clamp(Math.min(width / layout.width, height / layout.height) * 0.88, 0.32, 2.4)
+        const scale = clamp(Math.min(width / layout.width, height / layout.height) * 0.88, 0.02, 2.4)
         const ox = (width - layout.width * scale) / 2
         const oy = (height - layout.height * scale) / 2
         viewRef.current.manual = false
@@ -613,7 +613,7 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
         const px = event.clientX - rect.left
         const py = event.clientY - rect.top
         const current = viewRef.current
-        const nextScale = clamp(current.scale * Math.exp(-event.deltaY * 0.0012), 0.3, 2.4)
+        const nextScale = clamp(current.scale * Math.exp(-event.deltaY * 0.0012), 0.02, 2.4)
         const ratio = nextScale / current.scale
         viewRef.current.manual = true
         patchView({
@@ -758,8 +758,45 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
           '⤓', h('input', { type: 'file', accept: 'application/json', style: { display: 'none' }, onChange: importFile })),
         h('button', { className: 'mb-icon-btn', onClick: exportAll, title: '导出记忆图' }, '⤒'))
 
-      const stage = h('div', { className: 'mb-stage', style: { width: 760, height: 560, transform: `translate(${view.ox}px, ${view.oy}px) scale(${scale})` } },
-        h('svg', { className: 'mb-edges', width: 760, height: 560 },
+      const stageWidth = data?.layout?.width || 760
+      const stageHeight = data?.layout?.height || 560
+      // Dense, linked bubbles may touch; place captions in free gaps instead
+      // of drawing every title across neighbouring bubbles and captions.
+      const labelPositions = new Map()
+      const labelRects = []
+      if (tier.key !== 'far') {
+        const priority = nodes.slice().sort((a, b) => Number(selected?.id === b.id) - Number(selected?.id === a.id)
+          || b.importance - a.importance || String(a.id).localeCompare(String(b.id)))
+        for (const node of priority) {
+          if (searchKey && matched.size && !matched.has(node.id)) continue
+          const title = tier.key === 'mid' ? shortTitle(node.title) : node.title
+          const width = Math.min(node.r * 2 + 70, Math.max(36, Array.from(title || '').length * 12 / scale))
+          const height = (tier.key === 'near' && node.keywords?.length ? 32 : 17) / scale
+          const gap = 5 / scale
+          const candidates = [
+            { x: node.x - width / 2, y: node.y + node.r + gap },
+            { x: node.x - width / 2, y: node.y - node.r - gap - height },
+            { x: node.x + node.r + gap, y: node.y - height / 2 },
+            { x: node.x - node.r - gap - width, y: node.y - height / 2 },
+          ]
+          for (const position of candidates) {
+            const rect = { ...position, w: width, h: height }
+            if (rect.x < 0 || rect.y < 0 || rect.x + width > stageWidth || rect.y + height > stageHeight) continue
+            if (labelRects.some((other) => rect.x < other.x + other.w + gap && rect.x + width + gap > other.x
+              && rect.y < other.y + other.h + gap && rect.y + height + gap > other.y)) continue
+            if (nodes.some((other) => {
+              const dx = other.x - clamp(other.x, rect.x, rect.x + width)
+              const dy = other.y - clamp(other.y, rect.y, rect.y + height)
+              return dx * dx + dy * dy < (other.r + gap / 2) ** 2
+            })) continue
+            labelPositions.set(node.id, rect)
+            labelRects.push(rect)
+            break
+          }
+        }
+      }
+      const stage = h('div', { className: 'mb-stage', style: { width: stageWidth, height: stageHeight, transform: `translate(${view.ox}px, ${view.oy}px) scale(${scale})` } },
+        h('svg', { className: 'mb-edges', width: stageWidth, height: stageHeight },
           edges.map((edge) => {
             const from = nodeById.get(edge.from)
             const to = nodeById.get(edge.to)
@@ -808,14 +845,15 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
           if (tier.key === 'far') return null
           const dim = searchKey && matched.size && !matched.has(node.id)
           if (dim) return null
-          const maxWidth = node.r * 2 + 70
+          const label = labelPositions.get(node.id)
+          if (!label) return null
           return h('div', {
             key: node.id + '-label',
             className: 'mb-label',
             style: {
-              left: node.x - maxWidth / 2,
-              top: node.y + node.r + 4,
-              width: maxWidth,
+              left: label.x,
+              top: label.y,
+              width: label.w,
               fontSize: 12 / scale,
               opacity: tier.key === 'far' ? 0 : 1,
             },
