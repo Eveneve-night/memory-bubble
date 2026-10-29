@@ -23,9 +23,9 @@
 
 ### 2. 在 DeepSeek Harness 里使用（插件）
 
-**先下载**：[插件包 v0.3.4](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.3.4/dsh-memory-bubble-v0.3.4.zip)（解压即得 `dsh-memory-bubble/`；也可直接安装 [`.tgz`](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.3.4/dsh-memory-bubble-0.3.4.tgz)）
+**先下载**：[插件包 v0.3.5](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.3.5/dsh-memory-bubble-v0.3.5.zip)（解压即得 `dsh-memory-bubble/`；也可直接安装 [`.tgz`](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.3.5/dsh-memory-bubble-0.3.5.tgz)）
 
-![忆泡浮窗 v0.3.4](assets/shot-880.png)
+![忆泡浮窗 v0.3.5](assets/shot-880.png)
 
 #### 方式 A：本地安装（当前版本）
 
@@ -51,7 +51,7 @@ cd memory-bubble
 忆泡的记忆不是 DSH 专属。同一份 `state.json` 有四条通道可以给别的 AI 用，详见 **[INTEROP.md](INTEROP.md)**：
 
 互操作适配器使用同一仓库的 `interop/`，运行 `node interop/cli.mjs --help`。
-当前开发版支持自动发现运行中的插件；需一起更新插件，旧版发布包不含该桥接功能。连接方式和纯对话用法见 [INTEROP.md](INTEROP.md)。
+**v0.3.5 起**插件内置在线桥接：MCP / CLI 自动发现运行中的插件（`<profile>/.memory-bubble/bridge.json`），在线时复用插件操作，改完立刻出现在 UI；插件与适配器需一起升级。找不到桥接时自动退回文件模式（写操作持独占锁）。连接方式和纯对话用法见 [INTEROP.md](INTEROP.md)。
 
 ```bash
 # 打包一份记忆包（图 + 简报 + 便携提示词 + 工具清单）
@@ -109,6 +109,7 @@ assets/    README 截图
 - ✅ v0.3.2：八方向缩放（四边+四角，图形随窗口比例自适应）、底部托盘缩成局部浮层、窄窗两行自适应排版（搜索独占一行、隐藏副标题/图例）；已真机安装验证
 - ✅ v0.3.3：修复「关闭浮窗后点侧栏图标打不开」——入口改为指针按下即切换，键盘 Enter/空格同样可开
 - ✅ v0.3.4：修复互操作层 `remember` 被防幻觉守卫静默丢弃（CLI / MCP 写入不落库的回归）；interop 5/5
+- ✅ v0.3.5：插件内置本机在线桥接（随机端口 + Bearer 令牌 + 发现文件 `bridge.json`）；MCP / CLI 在线复用插件操作（23 个操作，含外部对话总结、编辑、托盘、会话继承），离线文件模式改为独占锁；自检 core 13/13、plugin 15/15、layout 3/3、interop 6/6
 - ⏳ 下一步：记忆自动归档与「遗忘曲线」；官方 App 版记忆卡流程（方案在 `docs/`）
 
 已知取舍：记忆抽取是**摘要式**的，不做向量检索（图 + 简报足够小，先把「看得见」做对）；冲突检测是启发式，需要人确认。

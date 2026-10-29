@@ -1,4 +1,4 @@
-# 忆泡 · DSH 插件（dsh-memory-bubble）v0.3.4
+# 忆泡 · DSH 插件（dsh-memory-bubble）v0.3.5
 
 把 AI 与你的日常对话，沉淀成一张可管理、可继承的暖色记忆泡泡图。
 宿主半负责「抽取 / 存储 / 简报 / 注入」，客户端半负责「可视化 / 编辑 / 托盘」。
@@ -8,6 +8,7 @@ v0.3.0 起改为**浮窗**：默认关闭、点左侧栏「忆泡」才打开，
 v0.3.1 修复工具 schema：5 个工具统一为标准 JSON Schema（顶层 `type: 'object'`），修掉模型侧 `parameters` 校验报错。
 v0.3.2 起窗口支持**八方向缩放**（四边+四角），图形随窗口比例自适应；底部托盘缩成局部浮层，窄窗自动两行排版。
 v0.3.4 修复「关闭浮窗后点侧栏图标打不开」：入口改为指针按下即切换，键盘 Enter 同样可开。
+v0.3.5 增加**本机在线桥接**：插件启动时在本机随机端口起带令牌的 HTTP 服务，把 `<profile>/.memory-bubble/bridge.json` 写出来，MCP / CLI 自动发现后复用插件操作（改完立刻反映到 UI）；同时插件运行期间持有独占锁，离线文件模式需先停 DSH 才能手改。
 
 ## 目录
 
@@ -131,27 +132,32 @@ GET  /memory-bubble/api/ai/prompt         // 便携提示词纯文本
 用 plugin_manager 的 install_bundle 安装 "D:\Deepseek Harness\memory-bubble\plugin"
 ```
 
-插件管理器接受绝对路径 / `file:` / `link:` / git 地址 / `.tgz`，会把它写进 profile 依赖并激活 bundle；发布页也提供 `dsh-memory-bubble-v0.3.4.tgz`，可直接 `install_bundle` 该文件的绝对路径或下载 URL。安装完成后刷新页面，左侧栏出现「忆泡」；点它打开浮窗。
+插件管理器接受绝对路径 / `file:` / `link:` / git 地址 / `.tgz`，会把它写进 profile 依赖并激活 bundle；发布页也提供 `dsh-memory-bubble-0.3.5.tgz` 与 `dsh-memory-bubble-v0.3.5.zip`，可直接 `install_bundle` 该文件的绝对路径或下载 URL。安装完成后刷新页面，左侧栏出现「忆泡」；点它打开浮窗（升级后建议重启 DSH，让新包生效并重建桥接文件）。
 
 **方式 B：手工。** 把 `plugin/` 复制或软链到 `<profile>/node_modules/dsh-memory-bubble`，在 profile 的 `dsh.profile.bundles` 里加 `dsh-memory-bubble`，刷新页面。
 
 > 安装类操作需要 DSH 的审批权限。安装后请先看三件事：左侧栏出现「忆泡」、点开浮窗是「从零开始」引导且默认不读对话、设置页有「忆泡」分区。
+
+## 外部软件连接（v0.3.5 桥接）
+
+插件启动后在 `<profile>/.memory-bubble/bridge.json` 写一份发现文件（`{url, token, pid, stateFile}`，权限 0600），并在 `127.0.0.1` 的随机端口上监听：只有带 `Authorization: Bearer <token>`、且不带 `Origin` 头的请求会被处理。MCP / CLI 读这份文件后自动进入**在线模式**，复用插件的处理函数——外部写入立即出现在 UI，`extract / conversation / carry / tray / session` 等依赖运行中插件的操作也可用。没有桥接时退回文件模式（写操作持 `state.json.lock` 独占锁）；在线出错不会静默回退。详见仓库根目录 [INTEROP.md](../INTEROP.md)。
 
 ## 自测
 
 ```
 cd plugin
 node dev/test-core.mjs       # 13 项：合并/去重/布局/简报/撤销/导入导出/解析健壮性/上限/按会话/手动时间
-node dev/test-plugin.mjs     # 14 项：apply 注册与路由、零起点、防幻觉、抽取、会话隔离、手动新增时间、清空、工具 schema、注入、导入导出、客户端三 slot、浮窗默认关闭/关闭按钮
+node dev/test-plugin.mjs     # 15 项：apply 注册与路由、零起点、防幻觉、抽取、会话隔离、手动新增时间、清空、工具 schema、注入、导入导出、客户端四 slot、浮窗默认关闭、桥接启停/鉴权/退出清理
+node dev/test-layout.mjs     # 3 项：300 气泡布局无重叠、无越界、链式/无连线图
 node --check lib/client.js   # 客户端单文件语法
 node --check lib/index.js    # 宿主半语法
 ```
 
-互操作层单独测（仓库根目录）：`node interop/dev/test-interop.mjs`（5 项：CLI / bundle schema / MCP 全套）。
+互操作层单独测（仓库根目录）：`node interop/dev/test-interop.mjs`（6 项：CLI / bundle schema / MCP 全套 / 在线桥接）。
 
 浮窗视觉与拖拽缩放用真渲染验收（`assets/shot-560.png` / `assets/shot-880.png`）：560×620 → 680×710 拖拽后缩放比例 65% → 79% 自适应，八方向手柄齐全、窄窗自动两行排版。
 
-当前结果：core 13/13、plugin（宿主+客户端）14/14、interop 5/5、`node --check` 四文件通过。
+当前结果：core 13/13、plugin（宿主+客户端）15/15、layout 3/3、interop 6/6、`node --check` 四文件通过。
 
 ## 上次「失控」的排查结论（v0.3.0）
 
