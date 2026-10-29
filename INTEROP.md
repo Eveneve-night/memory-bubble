@@ -3,6 +3,51 @@
 > 目标：忆泡不只是 DSH 里的一个插件。你在 DSH 里养大的记忆，可以被 **Claude Desktop / Cursor / 任意脚本 / 你自己的 AI** 读取、继承，也能从别的 AI 导回来。
 > 所有通道共用同一份数据与同一套格式，**零第三方依赖**，全部是 `node` 内置模块。
 
+## 当前开发版：连接运行中的 DSH
+
+需同时更新插件和本目录的适配器；旧 v0.3.4 插件没有在线桥接和独占锁。
+插件启动后，在 `<profile>/.memory-bubble/bridge.json` 写入本机地址和令牌。
+MCP/CLI 根据 `--data` 自动发现它。在线操作复用插件处理函数，不直接改运行中插件的数据文件。
+界面仍使用原 HTTP 接口；原五个 MCP 工具、图和记忆包格式均保留。
+
+```bash
+node interop/mcp-server.mjs --data "<profile>/.memory-bubble/state.json" --session S2
+node interop/cli.mjs remember --data "<profile>/.memory-bubble/state.json" --session S2 --title "偏好" --summary "喜欢用例子解释"
+node interop/cli.mjs carry --from S1 --to S2
+```
+
+在线 MCP 额外提供 `memory_action {operation, params}`，可执行图谱读取、节点编辑、关系编辑、
+托盘、会话开关、设置、总结、撤销和导入导出。完整操作名见 `plugin/lib/bridge.js` 的 `BRIDGE_ROUTES`。
+CLI 对应 `action <操作名> --json '<参数 JSON>'`，也可用 `--file` 传参数，避免 shell 转义。
+
+`conversation` 接受 `{sessionId,messages:[{role:"user",text:"用户原话"},{role:"assistant",text:"回复"}]}`，
+复用 DSH 当前模型进行一次总结。外部软件需要在自己的回合结束时调用；桥接不会自动监听其他软件。
+本地来源的角色标记由发送方负责准确提供，忆泡仍要求自动记忆有用户原话依据。
+
+其他平台可以直接读取发现文件，用 `Authorization: Bearer <token>` 请求该地址上的原 `/memory-bubble/api/*`。
+也可给 MCP/CLI 显式传 `--url <地址> --token <令牌>`。令牌不要放进提示词或分享。
+桥接只监听 `127.0.0.1`，不开放浏览器跨域；不需要修改 DSH 原有 GUI 端口。
+
+没有在线桥接时，文件模式继续可用，写命令在读改写全过程持有独占锁；损坏的数据文件直接报错，不覆盖为空库。
+在线连接出错不会退回文件写入。正常退出会释放锁；进程崩溃后如遗留 `state.json.lock`，
+先核对其中 `owner.json` 的 PID 已停止，再清理该锁和同目录过期的 `bridge.json`，不能在运行中删除。
+手工编辑 state.json 和旧版适配器不受此锁约束，应先停止 DSH。
+
+## 纯对话端：无需 MCP、插件或工具调用
+
+```bash
+node interop/cli.mjs chat --session S1 --out memory-chat.md
+# 将文件完整粘贴或上传到纯对话端。对话结束后，请它返回更新后的记忆包 JSON。
+node interop/cli.mjs import --file returned-bundle.json --session S2 --apply
+```
+
+`chat` 包含使用说明和本会话的节点、关系，支持只靠复制粘贴继承。
+`--session S2` 显式加入目标会话；`--apply` 明确允许更新已有节点和关系，不加则仍按原合并语义导入。
+继承复用节点身份；编辑共享节点会在所有归属会话生效，清空一个会话只解除它的归属。
+不把回传 JSON 中缺少的条目当作删除命令；删除需要显式 `forget`。
+纯对话端只能在自己的上下文使用记忆，不能自动同步或调用 DSH；导回由用户或有文件权限的软件执行。
+MCP 也提供 `memory://chat` 资源和带记忆内容的使用提示词。
+
 ## 一张图
 
 ```
@@ -85,7 +130,7 @@ node interop/cli.mjs forget --id n_xxx
 
 ## 3. HTTP API（DSH 运行中，给局域网 / 其他进程）
 
-默认前缀 `/memory-bubble/api`（插件依赖 DSH 的 `webServer`，只监听 DSH 自身端口，不额外开端口）。
+默认前缀 `/memory-bubble/api`。原接口仍由 DSH 的 `webServer` 提供；开发版额外提供上述带令牌的本机桥接端口。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -130,7 +175,7 @@ Schema：`schema/memory-bubble-bundle-v1.schema.json`、`schema/memory-bubble-v1
 
 ## 6. 安全与隐私
 
-- **数据只在本地**：所有通道都不联网，MCP 服务器只读写你指定的 JSON。
+- **本地优先**：默认使用本机桥接或指定 JSON；外部对话总结会使用 DSH 配置的模型服务。
 - **默认只读**：MCP 加 `--read-only` 后 `remember/link/forget` 返回错误；CLI 的写命令需你显式执行。
 - **可审计**：`state.json` 是纯 JSON，每次写入留 `.bak`；插件里可导出 / 撤销上一批总结。
 - **换 AI 前想清楚**：记忆里可能包含私人信息，导入别的 AI 前先看一眼 `brief`。
@@ -141,7 +186,7 @@ Schema：`schema/memory-bubble-bundle-v1.schema.json`、`schema/memory-bubble-v1
 | --- | --- | --- |
 | `memory-bubble/v1` | v1 | 图导出/导入；带 `schema` 字段与 `graph` 信封 |
 | `memory-bubble-bundle` | v1 | 记忆包 |
-| state.json | `stateVersion: 1` | 插件内部状态 |
+| state.json | `stateVersion: 2` | 插件内部状态 |
 
 其他宿主（浏览器、Tauri、MCP）想接入，只需实现 `memory-bubble/v1` 的导入导出，插件即可与其互操作。
 

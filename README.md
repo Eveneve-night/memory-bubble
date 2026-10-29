@@ -34,26 +34,15 @@ git clone https://github.com/Eveneve-night/memory-bubble.git
 cd memory-bubble
 ```
 
-在 DSH 的 profile 目录里把它加进依赖，并在 loader（`cordis.yml`）插入一行 `memory-bubble`：
+在 DSH 对话中让插件管理器安装本地目录或下载的 `.tgz` 绝对路径：
 
 ```bash
-# profile 目录（桌面版默认在 ~/.dsh/profiles/desktop）
-pnpm add "file:<path-to-clone>/plugin"
+用 plugin_manager 的 install_bundle 安装 "<克隆目录的绝对路径>/plugin"
 ```
 
-```yaml
-# cordis.yml 的 loader 列表里加入（或让 plugin_manager 安装 bundle）
-- id: memory-bubble
-  name: dsh-memory-bubble
-```
+包内已有 `cordis.patch.yml`，不需要手改 loader。
 
 刷新 Web GUI 后，**侧栏出现「忆泡」图标**即安装成功。忆泡默认关闭，点侧栏图标打开小窗口；窗口可拖动、可缩放，窗口内 × 关闭。首次安装是空图、不读对话，开启「读取对话并自动生成」后才按会话积攒记忆。
-
-#### 方式 B：复制进 `node_modules`
-
-把 `plugin/` 复制为 `<profile>/node_modules/dsh-memory-bubble`，再在 `cordis.yml` 里插入上面那行。
-
-> npm 包发布后会补上 `plugin_manager install_bundle` 的一行安装方式（bundle 自带 `cordis.patch.yml`，不需要手改 loader）。
 
 安装后的入口：**侧栏「忆泡」图标**（打开可拖动/缩放的小窗口）、**设置页「忆泡」分区**（读取对话并自动生成开关、每轮最多生成条数、记忆总量上限、去抖间隔、注入方式、导入导出）。
 
@@ -61,7 +50,8 @@ pnpm add "file:<path-to-clone>/plugin"
 
 忆泡的记忆不是 DSH 专属。同一份 `state.json` 有四条通道可以给别的 AI 用，详见 **[INTEROP.md](INTEROP.md)**：
 
-**先下载**：[互操作包 v0.2.1](https://github.com/Eveneve-night/memory-bubble/releases/download/v0.2.1/memory-bubble-interop-v0.2.1.zip)（MCP 服务器 + CLI + schema + 使用说明，解压后直接 `node interop/cli.mjs --help`）
+互操作适配器使用同一仓库的 `interop/`，运行 `node interop/cli.mjs --help`。
+当前开发版支持自动发现运行中的插件；需一起更新插件，旧版发布包不含该桥接功能。连接方式和纯对话用法见 [INTEROP.md](INTEROP.md)。
 
 ```bash
 # 打包一份记忆包（图 + 简报 + 便携提示词 + 工具清单）
@@ -71,8 +61,8 @@ node interop/cli.mjs bundle --out bundle.json
 node interop/mcp-server.mjs --data "<profile>/.memory-bubble/state.json"
 ```
 
-- **MCP**：5 个工具（search / brief / remember / link / forget）、3 个资源、1 个提示词，`initialize` 自带跨 AI 使用说明
-- **CLI**：`list / search / brief / export / import / bundle / remember / forget`，零依赖
+- **MCP**：保留 5 个工具，在线增加统一操作工具；4 个资源、1 个提示词，支持记忆包和完整插件操作
+- **CLI**：保留原命令，新增 `chat / carry / action`，零依赖
 - **HTTP**（DSH 运行中）：`/memory-bubble/api/ai/bundle`、`/ai/prompt`、`/interop`
 - **记忆包** `memory-bubble-bundle v1`：贴进别的 AI 的 system prompt 即可「继承」你的记忆
 

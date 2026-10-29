@@ -43,8 +43,13 @@ import {
   searchNodes,
   PORTABLE_PROMPT,
   TOOL_MANIFEST,
+  carryMemories,
+  forgetSession,
+  chatPacket,
+  validateToolArgs,
 } from './core.js'
-import { resolveProfileDir, readState, writeState, writeExport, statePath } from './store.js'
+import { resolveProfileDir, readState, writeState, writeExport, statePath, lockState } from './store.js'
+import { startBridge, BRIDGE_ROUTES } from './bridge.js'
 
 export const name = 'memory-bubble'
 export const inject = ['webServer']
@@ -58,7 +63,11 @@ export function apply(ctx) {
   let state = emptyState()
   let profileDir = ''
   let disposed = false
+  const handlers = new Map()
+  let closeBridge
+  let unlock
   const ready = init()
+  ready.catch((error) => console.error('[memory-bubble] init failed:', error.message))
 
   /** sessionId → [{ role, text, at }] 尚未被抽取的对话 */
   const buffers = new Map()
@@ -74,10 +83,12 @@ export function apply(ctx) {
   async function init() {
     try {
       profileDir = await resolveProfileDir()
+      unlock = await lockState(statePath(profileDir), 0)
       const loaded = await readState(profileDir)
       const migrated = migrateState(loaded)
       state = migrated.state
       if (migrated.migrated) await writeState(profileDir, state)
+      closeBridge = await startBridge(profileDir, handlers)
       const total = Object.keys(state.nodes).length
       if (total === 0) {
         console.info('[memory-bubble] 空忆泡已就绪（从零开始）：默认不读取对话，等待用户在面板里开启。')
@@ -85,18 +96,16 @@ export function apply(ctx) {
         console.info(`[memory-bubble] ready: ${total} 条记忆 / ${Object.keys(state.sessions).length} 个会话，状态文件 ${statePath(profileDir)}`)
       }
     } catch (error) {
-      console.error('[memory-bubble] load state failed:', error && error.message ? error.message : error)
+      if (unlock) await unlock()
+      throw error
     }
   }
 
   function persist() {
-    const snapshot = state
-    writeChain = writeChain
-      .then(() => (profileDir ? writeState(profileDir, snapshot) : undefined))
-      .catch((error) => {
-        console.error('[memory-bubble] persist failed:', error && error.message ? error.message : error)
-      })
-    return writeChain
+    const snapshot = structuredClone(state)
+    const result = writeChain.then(() => writeState(profileDir, snapshot))
+    writeChain = result.catch(() => {}) // Keep the queue usable; caller receives the failure.
+    return result
   }
 
   /* ------------------------------------------------------------ 会话事件折叠 */
@@ -438,6 +447,7 @@ export function apply(ctx) {
   }
 
   function route(path, handler) {
+    handlers.set(path, handler)
     ctx.effect(() => ctx.webServer.register({
       kind: 'exact',
       path: `${ROUTE_BASE}${path}`,
@@ -485,6 +495,7 @@ export function apply(ctx) {
       ok: true,
       schema: 'memory-bubble-interop',
       schemaVersion: 1,
+      operations: Object.keys(BRIDGE_ROUTES),
       app: {
         name,
         routes: {
@@ -521,6 +532,44 @@ export function apply(ctx) {
     res.statusCode = 200
     res.setHeader('content-type', 'text/plain; charset=utf-8')
     res.end(`${PORTABLE_PROMPT}\n`)
+  })
+
+  route('/ai/chat', async (req, res) => {
+    await ready
+    const sessionId = new URL(req.url, 'http://dsh.local').searchParams.get('sessionId') || undefined
+    res.setHeader('content-type', 'text/plain; charset=utf-8')
+    res.end(chatPacket(state, sessionId))
+  })
+
+  route('/tools/call', async (req, res) => {
+    await ready
+    const { name, arguments: args = {}, sessionId } = await readJson(req)
+    const definition = toolDefinitions().find((tool) => tool.name === name)
+    validateToolArgs(name, args)
+    const result = await definition.execute(args, { sessionId: args.sessionId || sessionId })
+    return html(res).send(200, result)
+  })
+
+  route('/conversation', async (req, res) => {
+    await ready
+    const { sessionId, messages } = await readJson(req)
+    if (typeof sessionId !== 'string' || !Array.isArray(messages) || messages.length > MAX_BUFFER_MESSAGES
+      || messages.some((message) => !['user', 'assistant'].includes(message.role) || typeof message.text !== 'string')) {
+      return html(res).send(400, { ok: false, error: 'expected sessionId and user/assistant messages' })
+    }
+    for (const message of messages) pushBuffer(sessionId, message)
+    return html(res).send(200, await runExtract(sessionId, 'manual'))
+  })
+
+  route('/session/attach', async (req, res) => {
+    await ready
+    const body = await readJson(req)
+    if (typeof body.from !== 'string' || typeof body.to !== 'string' || !body.from || !body.to) {
+      return html(res).send(400, { ok: false, error: 'expected from and to session ids' })
+    }
+    const result = carryMemories(state, body)
+    await persist()
+    return html(res).send(200, result)
   })
 
   route('/graph', async (req, res) => {
@@ -600,7 +649,7 @@ export function apply(ctx) {
     await ready
     if (req.method === 'DELETE') {
       const url = new URL(req.url || '/', 'http://dsh.local')
-      deleteNode(res, url.searchParams.get('id'))
+      await deleteNode(res, url.searchParams.get('id'))
       return
     }
     const body = await readJson(req)
@@ -624,10 +673,10 @@ export function apply(ctx) {
   route('/node/delete', async (req, res) => {
     await ready
     const body = await readJson(req)
-    deleteNode(res, body && body.id, body && body.sessionId)
+    await deleteNode(res, body && body.id, body && body.sessionId)
   })
 
-  function deleteNode(res, id, sessionId) {
+  async function deleteNode(res, id, sessionId) {
     if (!id || !state.nodes[id]) return html(res).send(404, { ok: false, error: 'node not found' })
     delete state.nodes[id]
     for (const edge of Object.values(state.edges)) {
@@ -637,7 +686,7 @@ export function apply(ctx) {
       if (Array.isArray(sess.tray)) sess.tray = sess.tray.filter((item) => item !== id)
     }
     if (sessionId) refreshDigest(state, sessionId)
-    void persist()
+    await persist()
     return html(res).send(200, { ok: true })
   }
 
@@ -687,7 +736,7 @@ export function apply(ctx) {
     if (!body || !body.id || !state.edges[body.id]) return html(res).send(404, { ok: false, error: 'edge not found' })
     delete state.edges[body.id]
     if (body.sessionId) refreshDigest(state, body.sessionId)
-    void persist()
+    await persist()
     return html(res).send(200, { ok: true })
   })
 
@@ -729,20 +778,7 @@ export function apply(ctx) {
     const body = await readJson(req)
     const sessionId = body && body.sessionId
     if (!sessionId) return html(res).send(400, { ok: false, error: 'missing sessionId' })
-    let removed = 0
-    for (const node of Object.values(state.nodes)) {
-      if (Array.isArray(node.sessions) && node.sessions.includes(sessionId)) {
-        delete state.nodes[node.id]
-        removed += 1
-        for (const edge of Object.values(state.edges)) {
-          if (edge.from === node.id || edge.to === node.id) delete state.edges[edge.id]
-        }
-      }
-    }
-    const sess = sessionState(state, sessionId)
-    sess.tray = []
-    sess.digest = { text: '', nodeIds: [], updatedAt: null }
-    state.batches = state.batches.filter((batch) => batch.sessionId !== sessionId)
+    const removed = forgetSession(state, sessionId)
     buffers.delete(sessionId)
     state.updatedAt = nowIso()
     await persist()
@@ -767,7 +803,7 @@ export function apply(ctx) {
     const payload = body && (body.graph || body)
     const inner = payload && payload.graph ? payload.graph : payload
     if (!inner || !Array.isArray(inner.nodes)) return html(res).send(400, { ok: false, error: 'invalid graph' })
-    const report = importGraph(state, payload)
+    const report = importGraph(state, payload, { sessionId: body.sessionId, updateExisting: body.updateExisting === true })
     await persist()
     return html(res).send(200, { ok: true, report })
   })
@@ -968,9 +1004,12 @@ export function apply(ctx) {
 
   /* ------------------------------------------------------------ 生命周期 */
 
-  ctx.effect(() => () => {
+  ctx.effect(() => async () => {
     disposed = true
     for (const timer of timers.values()) clearTimeout(timer)
     timers.clear()
+    await ready.catch(() => {})
+    await writeChain
+    if (closeBridge) { await closeBridge(); await unlock() }
   })
 }

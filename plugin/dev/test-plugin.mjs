@@ -6,7 +6,7 @@
  *       pre-step 注入兜底、客户端 slot 注册（无 main 面板）、浮窗默认关闭/可开关。
  */
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -31,6 +31,7 @@ async function check(name, fn) {
 const hooks = new Map()
 const routes = new Map()
 const tools = []
+const hostCleanups = []
 const services = {
   sessions: {
     get(id) {
@@ -49,7 +50,7 @@ const services = {
 }
 
 const memBubbleCtx = {
-  effect(fn) { const off = fn(); return off },
+  effect(fn) { const off = fn(); if (typeof off === 'function') hostCleanups.push(off); return off },
   on(name, fn) { const list = hooks.get(name) || []; list.push(fn); hooks.set(name, list) },
   get(name) { return services[name] },
   webServer: services.webServer,
@@ -218,6 +219,33 @@ await check('导出/导入：整图继承去重', async () => {
   assert.equal(graph.body.layout.nodes.length, totalNodes, '重复导入不应新增节点')
 })
 
+await check('桥接：在线共享状态、会话继承、纯对话往返、只读与独占写入', async () => {
+  const { createClient } = await import('../../interop/client.mjs')
+  const { lockState, statePath } = await import('../lib/store.js')
+  const data = statePath(profileDir)
+  const client = await createClient({ data, session: 'bridge-source' })
+  assert.equal(client.live, true)
+  const added = await Promise.all(['桥接偏好', '桥接计划'].map((title) => client.call('tools', {
+    name: 'memory_remember', arguments: { title, summary: '来自其他软件' },
+  })))
+  assert.ok(added.every((item) => item.node.sessions.includes('bridge-source')))
+  const graph = await call('/memory-bubble/api/graph?sessionId=bridge-source&scope=session')
+  assert.equal(graph.body.layout.nodes.length, 2)
+  const packet = await client.call('chat')
+  const bundle = JSON.parse(packet.split('```json\n')[1].split('\n```')[0])
+  bundle.graph.nodes[0].summary = '纯对话端修改的内容'
+  await client.call('import', { graph: bundle, sessionId: 'bridge-target', updateExisting: true })
+  await client.call('carry', { from: 'bridge-source', to: 'bridge-target' })
+  await client.call('clear')
+  const target = await client.call('tools', { name: 'memory_brief', arguments: { sessionId: 'bridge-target' } })
+  assert.ok(target.digest.includes('纯对话端修改的内容'))
+  const readonly = await createClient({ data, 'read-only': true })
+  await assert.rejects(readonly.call('clear', { sessionId: 'bridge-target' }), /read-only/)
+  await assert.rejects(lockState(data, 0), /state is in use/)
+  const descriptor = JSON.parse(await readFile(path.join(profileDir, '.memory-bubble', 'bridge.json'), 'utf8'))
+  assert.equal((await fetch(`${descriptor.url}/memory-bubble/api/health`)).status, 403)
+})
+
 /* ------------------------------------------------------------------ 客户端半 */
 
 const registrations = []
@@ -344,6 +372,7 @@ function ensureArray(value) {
 }
 
 for (const cleanup of cleanups) { try { cleanup() } catch { /* ignore */ } }
+for (const cleanup of hostCleanups.reverse()) await cleanup()
 await rm(profileDir, { recursive: true, force: true })
 await new Promise((resolve) => setTimeout(resolve, 20))
 console.log(`\n${passed} 项通过`)

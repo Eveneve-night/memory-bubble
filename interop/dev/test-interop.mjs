@@ -47,6 +47,16 @@ await check('CLI remember 写入一条记忆', async () => {
   assert.equal(Object.keys(state.nodes).length, 1)
 })
 
+await check('两个离线进程写入同一文件不丢记忆，CLI 会话参数生效', async () => {
+  const file = path.join(tmp, 'parallel.json')
+  const results = await Promise.all(['甲', '乙'].map((title) => run(process.execPath,
+    ['interop/cli.mjs', 'remember', '--data', file, '--session', 'S2', '--title', title, '--summary', '并行手工记忆'])))
+  for (const result of results) assert.equal(result.code, 0, result.stderr)
+  const state = await loadState(file)
+  assert.equal(Object.keys(state.nodes).length, 2)
+  assert.ok(Object.values(state.nodes).every((node) => node.sessions.includes('S2')))
+})
+
 await check('CLI list / search / brief 能读出来', async () => {
   const state = await loadState(dataFile)
   remember(state, { title: '每周读论文', summary: '每周一篇，偏 HCI。', importance: 60, kind: '计划', keywords: ['论文'] })
@@ -102,7 +112,7 @@ await check('bundle 符合 memory-bubble-bundle v1 结构', async () => {
 })
 
 await check('MCP：initialize / tools/list / tools/call / resources/read', async () => {
-  const child = spawn(process.execPath, ['interop/mcp-server.mjs', '--data', dataFile], { cwd: root, windowsHide: true })
+  const child = spawn(process.execPath, ['interop/mcp-server.mjs', '--data', dataFile, '--session', 'mcp-test'], { cwd: root, windowsHide: true })
   const pending = new Map()
   let buffer = ''
   child.stdout.on('data', (chunk) => {
@@ -130,6 +140,7 @@ await check('MCP：initialize / tools/list / tools/call / resources/read', async
   try {
     const init = await request('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '0' } })
     assert.equal(init.result.serverInfo.name, 'memory-bubble')
+    assert.equal(init.result.serverInfo.version, JSON.parse(await readFile(path.join(root, 'plugin/package.json'), 'utf8')).version)
     assert.ok(init.result.instructions.includes('忆泡'))
 
     const tools = await request('tools/list', {})
@@ -138,12 +149,16 @@ await check('MCP：initialize / tools/list / tools/call / resources/read', async
 
     const call = await request('tools/call', { name: 'memory_search', arguments: { query: 'Rust' } })
     const payload = JSON.parse(call.result.content[0].text)
-    assert.ok(payload.count >= 1 && payload.results[0].title.includes('Rust'))
+    assert.equal(payload.count, 0, '指定默认会话时，检索不混入 external-ai 的记忆')
 
     const read = await request('resources/read', { uri: 'memory://graph' })
     const graph = JSON.parse(read.result.contents[0].text)
     assert.equal(graph.nodes.length, 2)
 
+    const remembered = await request('tools/call', { name: 'memory_remember', arguments: { title: 'MCP Rust 会话归属', summary: '默认会话来自启动参数' } })
+    assert.deepEqual(JSON.parse(remembered.result.content[0].text).node.sessions, ['mcp-test'])
+    const scoped = await request('tools/call', { name: 'memory_search', arguments: { query: 'Rust' } })
+    assert.equal(JSON.parse(scoped.result.content[0].text).count, 1)
     const digest = await request('resources/read', { uri: 'memory://digest' })
     assert.ok(digest.result.contents[0].text.includes('忆泡'))
 

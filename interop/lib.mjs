@@ -60,8 +60,9 @@ export async function loadState(file) {
       if (!parsed.sessions) parsed.sessions = {}
       return parsed
     }
-  } catch {
-    /* 文件不存在 / 损坏：从空状态开始（CLI 写入时会新建） */
+    throw new Error(`Invalid Memory Bubble state: ${file}`)
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
   }
   return emptyState()
 }
@@ -92,8 +93,7 @@ export function latestSessionId(state) {
 
 export function brief(state, sessionId) {
   const id = sessionId || latestSessionId(state)
-  const sess = id ? state.sessions[id] : null
-  const text = sess && sess.digest && sess.digest.text ? sess.digest.text : buildDigest(state, id || null).text
+  const text = buildDigest(state, id || null).text
   return { ok: true, sessionId: id || null, digest: text }
 }
 

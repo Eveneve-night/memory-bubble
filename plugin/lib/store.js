@@ -6,7 +6,8 @@
  * 本文件的函数只需要 node:fs / node:path / node:os，可在 node 里直接单测。
  */
 
-import { mkdir, readFile, rename, writeFile, copyFile, access } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile, copyFile, access, rm } from 'node:fs/promises'
+import { setTimeout as delay } from 'node:timers/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { emptyState, STATE_VERSION } from './core.js'
@@ -52,6 +53,25 @@ export function memoryBubbleDir(profileDir) {
 
 export function statePath(profileDir) {
   return path.join(memoryBubbleDir(profileDir), 'state.json')
+}
+
+/** Lock the entire read/edit/write transaction, or the running plugin lifetime. */
+export async function lockState(file, timeoutMs = 5000) {
+  const lock = `${file}.lock`
+  await mkdir(path.dirname(file), { recursive: true })
+  const deadline = Date.now() + timeoutMs
+  while (true) {
+    try {
+      await mkdir(lock)
+      break
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error
+      if (Date.now() >= deadline) throw new Error(`Memory Bubble state is in use: ${lock}. Use the live bridge; after a crash, remove this lock only when its owner has stopped.`)
+      await delay(50)
+    }
+  }
+  await writeFile(path.join(lock, 'owner.json'), JSON.stringify({ pid: process.pid }), 'utf8')
+  return () => rm(lock, { recursive: true })
 }
 
 /** 读取状态；缺失/损坏返回空状态（不抛） */

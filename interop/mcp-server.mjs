@@ -9,62 +9,24 @@
  */
 
 import readline from 'node:readline'
-import { PORTABLE_PROMPT, TOOL_MANIFEST } from '../plugin/lib/core.js'
-import { bundle, brief, forget, link, listNodes, loadState, parseArgs, remember, resolveDataFile, saveState, search } from './lib.mjs'
+import { readFile } from 'node:fs/promises'
+import { PORTABLE_PROMPT } from '../plugin/lib/core.js'
+import { parseArgs } from './lib.mjs'
+import { createClient } from './client.mjs'
 
-const VERSION = '0.2.0'
+const VERSION = JSON.parse(await readFile(new URL('../plugin/package.json', import.meta.url), 'utf8')).version
 const args = parseArgs()
-let dataFile = await resolveDataFile(args.data)
-let sessionId = args.session || null
-const readOnly = args['read-only'] === true
-let state = await loadState(dataFile)
+const client = await createClient(args)
 
 function log(...parts) {
   process.stderr.write(`[memory-bubble-mcp] ${parts.join(' ')}\n`)
-}
-
-async function refresh() {
-  state = await loadState(dataFile)
-}
-
-async function persist() {
-  await saveState(dataFile, state)
-}
-
-const TOOL_IMPL = {
-  memory_search: async ({ query, limit }) => {
-    await refresh()
-    const results = search(state, query, limit || 5)
-    return { count: results.length, results }
-  },
-  memory_brief: async ({ sessionId: sid }) => brief(state, sid || sessionId),
-  memory_remember: async (toolArgs) => {
-    if (readOnly) return { ok: false, error: 'server is read-only' }
-    await refresh()
-    const result = remember(state, toolArgs)
-    await persist()
-    return result
-  },
-  memory_link: async (toolArgs) => {
-    if (readOnly) return { ok: false, error: 'server is read-only' }
-    await refresh()
-    const result = link(state, toolArgs)
-    await persist()
-    return result
-  },
-  memory_forget: async (toolArgs) => {
-    if (readOnly) return { ok: false, error: 'server is read-only' }
-    await refresh()
-    const result = forget(state, toolArgs)
-    await persist()
-    return result
-  },
 }
 
 const RESOURCES = [
   { uri: 'memory://graph', name: '忆泡记忆图（JSON）', description: '完整记忆图谱：节点、连线、权重、会话来源', mimeType: 'application/json' },
   { uri: 'memory://digest', name: '忆泡记忆简报（文本）', description: '当前会话的稳定简报，可直接贴进上下文', mimeType: 'text/plain' },
   { uri: 'memory://prompt', name: '跨 AI 使用说明', description: '其他 AI 读取并使用这份记忆的规则', mimeType: 'text/plain' },
+  { uri: 'memory://chat', name: '纯对话记忆包', description: '可粘贴到无工具对话端的使用说明与记忆 JSON', mimeType: 'text/plain' },
 ]
 
 function send(payload) {
@@ -86,9 +48,9 @@ function textContent(text) {
 async function handleToolsCall(params) {
   const name = params && params.name
   const toolArgs = (params && params.arguments) || {}
-  const impl = TOOL_IMPL[name]
-  if (!impl) throw Object.assign(new Error(`unknown tool: ${name}`), { code: -32602 })
-  const result = await impl(toolArgs)
+  if (!client.tools.some((tool) => tool.name === name)) throw Object.assign(new Error(`unknown tool: ${name}`), { code: -32602 })
+  const result = name === 'memory_action' ? await client.call(toolArgs.operation, toolArgs.params)
+    : await client.call('tools', { name, arguments: toolArgs })
   return { content: textContent(JSON.stringify(result, null, 2)), isError: result && result.ok === false ? true : undefined }
 }
 
@@ -104,23 +66,23 @@ async function dispatch(method, params) {
     case 'ping':
       return {}
     case 'tools/list':
-      return { tools: TOOL_MANIFEST.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.parameters })) }
+      return { tools: client.tools.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.parameters })) }
     case 'tools/call':
       return handleToolsCall(params)
     case 'resources/list':
       return { resources: RESOURCES }
     case 'resources/read': {
       const uri = params && params.uri
-      await refresh()
-      if (uri === 'memory://graph') return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(bundle(state, sessionId).graph, null, 2) }] }
-      if (uri === 'memory://digest') return { contents: [{ uri, mimeType: 'text/plain', text: brief(state, sessionId).digest || '（还没有记忆）' }] }
+      if (uri === 'memory://graph') return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify((await client.call('bundle')).graph, null, 2) }] }
+      if (uri === 'memory://digest') return { contents: [{ uri, mimeType: 'text/plain', text: (await client.call('tools', { name: 'memory_brief' })).digest || '（还没有记忆）' }] }
       if (uri === 'memory://prompt') return { contents: [{ uri, mimeType: 'text/plain', text: PORTABLE_PROMPT }] }
+      if (uri === 'memory://chat') return { contents: [{ uri, mimeType: 'text/plain', text: await client.call('chat') }] }
       throw Object.assign(new Error(`unknown resource: ${uri}`), { code: -32602 })
     }
     case 'prompts/list':
       return { prompts: [{ name: 'memory-bubble-usage', description: '把忆泡记忆包交给当前 AI 的使用说明', arguments: [{ name: 'sessionId', description: '会话 id，可省略', required: false }] }] }
     case 'prompts/get':
-      return { description: '忆泡记忆使用说明', messages: [{ role: 'user', content: { type: 'text', text: PORTABLE_PROMPT } }] }
+      return { description: '忆泡记忆使用说明', messages: [{ role: 'user', content: { type: 'text', text: await client.call('chat', { sessionId: params?.arguments?.sessionId || args.session }) } }] }
     case 'logging/setLevel':
       return {}
     default:
@@ -129,6 +91,7 @@ async function dispatch(method, params) {
 }
 
 const rl = readline.createInterface({ input: process.stdin, terminal: false })
+let queue = Promise.resolve()
 rl.on('line', (line) => {
   const text = line.trim()
   if (!text) return
@@ -140,7 +103,8 @@ rl.on('line', (line) => {
     return
   }
   const isNotification = typeof message.id === 'undefined'
-  dispatch(message.method, message.params)
+  if (isNotification) return
+  queue = queue.then(() => dispatch(message.method, message.params))
     .then((result) => {
       if (!isNotification) ok(message.id, result)
     })
@@ -150,4 +114,4 @@ rl.on('line', (line) => {
     })
 })
 
-log(`ready · data=${dataFile} · session=${sessionId || 'auto'} · readOnly=${readOnly} · nodes=${listNodes(state).length}`)
+log(`ready · transport=${client.live ? 'live' : 'file'} · session=${args.session || 'auto'}`)
