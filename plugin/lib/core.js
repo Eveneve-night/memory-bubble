@@ -206,8 +206,6 @@ export function computeLayout(state) {
   const expansion = Math.max(1, Math.sqrt(area / (760 * 560 * 0.28)))
   const W = Math.ceil(760 * expansion)
   const H = Math.ceil(560 * expansion)
-  const cx = W / 2
-  const cy = H / 2
   const maxHits = Math.max(1, ...nodes.map((node) => node.hits || 1))
   const frequencies = new Map(nodes.map((node) => [node.id, clamp(Number.isFinite(node._freq) ? node._freq
     : ((node.sessions?.length || 1) - 1) * 0.3 + (node.hits || 1) / maxHits * 0.55, 0, 1)]))
@@ -291,7 +289,26 @@ export function computeLayout(state) {
     }
     if (settling && maxOverlap < 0.5) break
   }
-  const positions = Object.fromEntries(points.map((p) => [p.id, { x: Math.round(cx + p.x), y: Math.round(cy + p.y), r: p.r }]))
+  // Relaxation is approximate. Expand spacing once to guarantee a 6px
+  // collision buffer per bubble, without changing importance or radial order.
+  const occupied = new Set()
+  for (const point of points) {
+    point.x = Math.round(point.x)
+    point.y = Math.round(point.y)
+    while (occupied.has(`${point.x},${point.y}`)) point.x += 1
+    occupied.add(`${point.x},${point.y}`)
+  }
+  let spread = 1
+  for (let i = 0; i < points.length; i += 1) for (let j = 0; j < i; j += 1) {
+    const a = points[i]
+    const b = points[j]
+    spread = Math.max(spread, (a.r + b.r + 12) / Math.hypot(a.x - b.x, a.y - b.y))
+  }
+  const width = Math.ceil(W * spread)
+  const height = Math.ceil(H * spread)
+  const positions = Object.fromEntries(points.map((p) => [p.id, {
+    x: width / 2 + p.x * spread, y: height / 2 + p.y * spread, r: p.r, collisionR: p.r + 6,
+  }]))
   const edges = Object.values(state.edges).map((edge) => {
     const a = positions[edge.from]
     const b = positions[edge.to]
@@ -308,8 +325,8 @@ export function computeLayout(state) {
     }
   }).filter(Boolean)
   return {
-    width: W,
-    height: H,
+    width,
+    height,
     nodes: nodes.map((node) => ({
       id: node.id,
       title: node.title,

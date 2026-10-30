@@ -118,14 +118,22 @@ window.__ModuleLoader__.load({
     }
 
     function tierOf(scale) {
-      if (scale < 0.62) return { key: 'far', label: '远景 · 柔光团块' }
+      if (scale < 0.62) return { key: 'far', label: '远景 · 内容关键词' }
       if (scale < 1.3) return { key: 'mid', label: '中景 · 关键词' }
-      return { key: 'near', label: '近景 · 记忆全貌' }
+      return { key: 'near', label: '近景 · 点击查看详情' }
     }
 
     function shortTitle(title) {
       if (!title) return ''
       return title.length > 7 ? title.slice(0, 6) + '…' : title
+    }
+
+    function bubbleLabel(node, compact) {
+      const content = (text) => String(text || '')
+        .replace(/\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}日?(?:[T\s]+\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?Z?)?|\d{1,2}:\d{2}(?::\d{2})?/g, '')
+        .replace(/^[\s·,，:：|—-]+|[\s·,，:：|—-]+$/g, '')
+      return shortTitle((node.keywords || []).map(content).filter(Boolean).slice(0, compact ? 1 : 2).join('·')
+        || content(node.title) || content(node.summary) || '记忆')
     }
 
     function fmtDate(iso) {
@@ -256,15 +264,15 @@ html[data-mb-theme="dark"] .mb-btn.danger{color:#ff9a80}
 .mb-seg button.on{background:var(--mb-card-strong);color:var(--mb-ink);box-shadow:0 2px 8px rgba(140,92,60,.16)}
 .mb-viewport{position:relative;flex:1;overflow:hidden;cursor:grab;touch-action:none}
 .mb-viewport.dragging{cursor:grabbing}
-.mb-stage{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
-.mb-edges{position:absolute;left:0;top:0;overflow:visible}
+.mb-stage{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform;isolation:isolate}
+.mb-edges{position:absolute;left:0;top:0;overflow:visible;z-index:0}
 .mb-edge-line{stroke:rgba(178,128,98,.5);stroke-width:1.2;fill:none;vector-effect:non-scaling-stroke;transition:stroke .18s ease,stroke-opacity .18s ease}
 html[data-mb-theme="dark"] .mb-edge-line{stroke:rgba(255,198,160,.34)}
 .mb-edge-line.conflict{stroke:#c95f42;stroke-dasharray:5 5;stroke-opacity:.8}
 html[data-mb-theme="dark"] .mb-edge-line.conflict{stroke:#ff9c7c}
 .mb-edge-line.hot{stroke:rgba(232,120,72,.9);stroke-opacity:1}
 .mb-edge-hit{stroke:transparent;stroke-width:14;fill:none;cursor:pointer;pointer-events:stroke}
-.mb-node{position:absolute;border-radius:50%;cursor:pointer;transition:box-shadow .18s ease,filter .2s ease,opacity .22s ease;
+.mb-node{position:absolute;z-index:1;border-radius:50%;cursor:pointer;transition:box-shadow .18s ease,filter .2s ease,opacity .22s ease;
   box-shadow:0 10px 26px rgba(180,104,66,.22), inset 0 0 0 1px rgba(255,255,255,.5), inset 0 -6px 16px rgba(180,92,54,.18)}
 html[data-mb-theme="dark"] .mb-node{box-shadow:0 12px 30px rgba(0,0,0,.42), inset 0 0 0 1px rgba(255,255,255,.16), inset 0 -8px 18px rgba(0,0,0,.25)}
 .mb-node::before{content:'';position:absolute;inset:17% 20% 48% 24%;border-radius:50%;
@@ -273,7 +281,7 @@ html[data-mb-theme="dark"] .mb-node{box-shadow:0 12px 30px rgba(0,0,0,.42), inse
 .mb-node:hover::after,.mb-node.sel::after{box-shadow:inset 0 0 0 2px rgba(255,255,255,.85), inset 0 0 22px rgba(255,244,232,.6)}
 .mb-node.dimmed{opacity:.16;filter:saturate(.4)}
 .mb-node.pinned{filter:drop-shadow(0 0 12px rgba(255,196,140,.75))}
-.mb-label{position:absolute;text-align:center;pointer-events:none;line-height:1.28;color:var(--mb-ink);
+.mb-label{position:absolute;z-index:2;text-align:center;pointer-events:none;line-height:1.28;color:var(--mb-ink);
   text-shadow:0 1px 0 rgba(255,255,255,.55);font-weight:560;letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 html[data-mb-theme="dark"] .mb-label{text-shadow:0 1px 2px rgba(0,0,0,.5)}
 .mb-label .kw{display:block;font-size:.86em;font-weight:450;color:var(--mb-ink-soft)}
@@ -764,14 +772,14 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
       // of drawing every title across neighbouring bubbles and captions.
       const labelPositions = new Map()
       const labelRects = []
-      if (tier.key !== 'far') {
+      {
         const priority = nodes.slice().sort((a, b) => Number(selected?.id === b.id) - Number(selected?.id === a.id)
           || b.importance - a.importance || String(a.id).localeCompare(String(b.id)))
         for (const node of priority) {
           if (searchKey && matched.size && !matched.has(node.id)) continue
-          const title = tier.key === 'mid' ? shortTitle(node.title) : node.title
+          const title = bubbleLabel(node, tier.key === 'far')
           const width = Math.min(node.r * 2 + 70, Math.max(36, Array.from(title || '').length * 12 / scale))
-          const height = (tier.key === 'near' && node.keywords?.length ? 32 : 17) / scale
+          const height = 17 / scale
           const gap = 5 / scale
           const candidates = [
             { x: node.x - width / 2, y: node.y + node.r + gap },
@@ -835,14 +843,11 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
               if (event.shiftKey) { void addToTray(node.id); return }
               setSelected({ type: 'node', id: node.id })
             },
-            title: node.title,
-          }, tier.key === 'near'
-            ? h('div', { style: { position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', borderRadius: '50%' } },
-              h('span', { style: { fontSize: clamp(node.r * 0.32, 9, 15), color: 'rgba(96,56,36,.72)', fontWeight: 600, padding: '0 6px', textAlign: 'center', lineHeight: 1.2 } }, node.title))
-            : null)
+            title: '点击查看完整记忆',
+            'aria-label': bubbleLabel(node, false),
+          })
         }),
         nodes.map((node) => {
-          if (tier.key === 'far') return null
           const dim = searchKey && matched.size && !matched.has(node.id)
           if (dim) return null
           const label = labelPositions.get(node.id)
@@ -855,13 +860,9 @@ html[data-mb-theme="dark"] .mb-window{box-shadow:0 26px 70px rgba(0,0,0,.5)}
               top: label.y,
               width: label.w,
               fontSize: 12 / scale,
-              opacity: tier.key === 'far' ? 0 : 1,
             },
           },
-            tier.key === 'mid' ? shortTitle(node.title) : node.title,
-            tier.key === 'near' && (node.keywords || []).length
-              ? h('span', { className: 'kw' }, (node.keywords || []).slice(0, 3).map((keyword) => `#${keyword}`).join(' '))
-              : null)
+            bubbleLabel(node, tier.key === 'far'))
         }))
 
       const emptyPanel = scope === 'session' && stats.totalNodes > 0

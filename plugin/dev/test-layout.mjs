@@ -45,11 +45,12 @@ for (const topology of ['star', 'chain', 'none']) {
   const dense = computeLayout(graph(300, topology, true))
   for (let i = 0; i < dense.nodes.length; i += 1) {
     const a = dense.nodes[i]
+    assert.equal(a.collisionR, a.r + 6)
     assert.ok(a.x - a.r >= 0 && a.x + a.r <= dense.width)
     assert.ok(a.y - a.r >= 0 && a.y + a.r <= dense.height)
     for (let j = 0; j < i; j += 1) {
       const b = dense.nodes[j]
-      assert.ok(distance(a, b) >= a.r + b.r, `${topology}: ${a.id} 与 ${b.id} 重叠`)
+      assert.ok(distance(a, b) + 1e-7 >= a.collisionR + b.collisionR, `${topology}: ${a.id} 与 ${b.id} 碰撞区重叠`)
     }
   }
   const byId = new Map(dense.nodes.map((node) => [node.id, node]))
@@ -68,3 +69,12 @@ const dangling = graph(2)
 dangling.edges.missing = { id: 'missing', from: 'node-0', to: 'deleted' }
 assert.equal(computeLayout(dangling).edges.length, 1)
 console.log('PASS 空图、单气泡、失效连线兼容')
+
+state.nodes['node-0'].importance = 100
+const resized = computeLayout(state)
+const moved = new Map(resized.nodes.map((node) => [node.id, node]))
+for (const edge of resized.edges) {
+  assert.deepEqual([edge.x1, edge.y1, edge.x2, edge.y2],
+    [moved.get(edge.from).x, moved.get(edge.from).y, moved.get(edge.to).x, moved.get(edge.to).y])
+}
+console.log('PASS 气泡大小及位置更新后，连线端点同步更新')
